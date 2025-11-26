@@ -35,10 +35,10 @@ def main():
                 db_config = json.load(f)
         else:
             db_config = {
-                'host': 'localhost',
-                'user': 'root',
-                'password': '',
-                'database': 'u520834156_dbUPAHOZoning'
+                 'host': '153.92.15.8',
+            'user': 'u520834156_uPAHOZone25',
+            'password': 'Y+;a+*1y',
+            'database': 'u520834156_dbUPAHOZoning'
             }
         
         # Initialize ML analytics

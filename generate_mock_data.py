@@ -40,11 +40,15 @@ def connect_database(db_config):
             database=db_config.get('database', 'u520834156_dbUPAHOZoning'),
             port=db_config.get('port', 3306),
             charset='utf8mb4',
-            connect_timeout=10
+            connect_timeout=30,
+            autocommit=False,  # We'll commit manually in batches
+            buffered=True  # Use buffered cursor to avoid fetch issues
         )
         return connection
     except Exception as e:
         print(f"Database connection error: {e}")
+        import traceback
+        traceback.print_exc()
         return None
 
 def generate_mock_data(num_records=1500):
@@ -201,93 +205,85 @@ def generate_mock_data(num_records=1500):
     
     return data
 
-def insert_mock_data(connection, data):
-    """Insert mock data into database"""
-    cursor = connection.cursor()
+def insert_mock_data(connection, data, batch_size=50):
+    """Insert mock data into database in batches"""
+    cursor = connection.cursor(buffered=True)
     
     inserted_clients = 0
     inserted_applications = 0
+    errors = []
     
     try:
-        for i, record in enumerate(data):
-            # Generate unique client ID
-            client_id = f"MOCK{random.randint(100000, 999999)}{i}"
+        # Process in smaller batches to avoid timeout
+        for batch_start in range(0, len(data), batch_size):
+            batch = data[batch_start:batch_start + batch_size]
+            batch_num = batch_start // batch_size + 1
+            total_batches = (len(data) + batch_size - 1) // batch_size
+            print(f"Processing batch {batch_num}/{total_batches} ({len(batch)} records)...")
             
-            # Calculate date of birth from age
-            birth_year = datetime.now().year - record['age']
-            birth_month = random.randint(1, 12)
-            birth_day = random.randint(1, 28)
-            date_of_birth = datetime(birth_year, birth_month, birth_day).date()
-            
-            # Age as date (this seems to be stored as date in the database)
-            age_date = date_of_birth
-            
-            # Check if client already exists
-            cursor.execute("SELECT id FROM clients WHERE id = %s", (client_id,))
-            if cursor.fetchone():
-                # Client exists, use it
-                pass
-            else:
-                # Insert new client
-                firstname = f"Client{random.randint(1000, 9999)}"
-                lastname = f"LastName{random.randint(100, 999)}"
-                
-                username = f"user_{client_id}_{random.randint(1000, 9999)}"
-                email = f"{firstname.lower()}.{lastname.lower()}@example.com"
-                
-                cursor.execute("""
-                    INSERT INTO clients 
-                    (id, firstname, lastname, date_of_birth, age, gender, 
-                     email, cellphone, username, created_at, updated_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                """, (
-                    client_id,
-                    firstname,
-                    lastname,
-                    date_of_birth,
-                    age_date,  # Age stored as date
-                    record['gender'],
-                    email,
-                    f"09{random.randint(100000000, 999999999)}",
-                    username,
-                    record['created_at'],
-                    record['created_at']
-                ))
-                inserted_clients += 1
-            
-            # Insert application form
-            # Use ON DUPLICATE KEY UPDATE or IGNORE to handle duplicates
-            try:
-                cursor.execute("""
-                    INSERT INTO application_forms 
-                    (project_type, project_nature, project_location, project_area, 
-                     lot_area, project_cost_numeric, created_at, updated_at, client_id, status)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    ON DUPLICATE KEY UPDATE updated_at = VALUES(updated_at)
-                """, (
-                    record['project_type'],
-                    record['project_nature'],
-                    record['project_location'],
-                    record['project_area'],
-                    record['lot_area'],
-                    record['project_cost_numeric'],
-                    record['created_at'],
-                    record['created_at'] + timedelta(days=random.randint(5, 60)),
-                    client_id,
-                    random.choice(['approved', 'pending', 'rejected'])
-                ))
-            except mysql.connector.Error as e:
-                # If ON DUPLICATE KEY not supported, try without it
-                if 'Duplicate entry' in str(e):
-                    continue  # Skip duplicate
-                else:
-                    # Try without ON DUPLICATE KEY
+            for i, record in enumerate(batch):
+                try:
+                    # Generate unique client ID
+                    client_id = f"MOCK{random.randint(100000, 999999)}{batch_start + i}"
+                    
+                    # Calculate date of birth from age
+                    birth_year = datetime.now().year - record['age']
+                    birth_month = random.randint(1, 12)
+                    birth_day = random.randint(1, 28)
+                    date_of_birth = datetime(birth_year, birth_month, birth_day).date()
+                    
+                    # Age as date (this seems to be stored as date in the database)
+                    age_date = date_of_birth
+                    
+                    # Check if client already exists
+                    cursor.execute("SELECT id FROM clients WHERE id = %s", (client_id,))
+                    if cursor.fetchone():
+                        # Client exists, use it
+                        pass
+                    else:
+                        # Insert new client
+                        firstname = f"Client{random.randint(1000, 9999)}"
+                        lastname = f"LastName{random.randint(100, 999)}"
+                        
+                        username = f"user_{client_id}_{random.randint(1000, 9999)}"
+                        email = f"{firstname.lower()}.{lastname.lower()}@example.com"
+                        
+                        try:
+                            cursor.execute("""
+                                INSERT INTO clients 
+                                (id, firstname, lastname, date_of_birth, age, gender, 
+                                 email, cellphone, username, created_at, updated_at)
+                                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            """, (
+                                client_id,
+                                firstname,
+                                lastname,
+                                date_of_birth,
+                                age_date,  # Age stored as date
+                                record['gender'],
+                                email,
+                                f"09{random.randint(100000000, 999999999)}",
+                                username,
+                                record['created_at'],
+                                record['created_at']
+                            ))
+                            inserted_clients += 1
+                        except mysql.connector.Error as e:
+                            if 'Duplicate entry' in str(e):
+                                # Client already exists, that's fine
+                                pass
+                            else:
+                                raise
+                    
+                    # Insert application form
+                    # Use ON DUPLICATE KEY UPDATE or IGNORE to handle duplicates
                     try:
                         cursor.execute("""
                             INSERT INTO application_forms 
                             (project_type, project_nature, project_location, project_area, 
                              lot_area, project_cost_numeric, created_at, updated_at, client_id, status)
                             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            ON DUPLICATE KEY UPDATE updated_at = VALUES(updated_at)
                         """, (
                             record['project_type'],
                             record['project_nature'],
@@ -300,18 +296,71 @@ def insert_mock_data(connection, data):
                             client_id,
                             random.choice(['approved', 'pending', 'rejected'])
                         ))
-                    except mysql.connector.Error as e2:
-                        print(f"Error inserting application {i}: {e2}")
-                        continue
-            inserted_applications += 1
+                        inserted_applications += 1
+                    except mysql.connector.Error as e:
+                        # If ON DUPLICATE KEY not supported, try without it
+                        if 'Duplicate entry' in str(e):
+                            continue  # Skip duplicate
+                        else:
+                            # Try without ON DUPLICATE KEY
+                            try:
+                                cursor.execute("""
+                                    INSERT INTO application_forms 
+                                    (project_type, project_nature, project_location, project_area, 
+                                     lot_area, project_cost_numeric, created_at, updated_at, client_id, status)
+                                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                """, (
+                                    record['project_type'],
+                                    record['project_nature'],
+                                    record['project_location'],
+                                    record['project_area'],
+                                    record['lot_area'],
+                                    record['project_cost_numeric'],
+                                    record['created_at'],
+                                    record['created_at'] + timedelta(days=random.randint(5, 60)),
+                                    client_id,
+                                    random.choice(['approved', 'pending', 'rejected'])
+                                ))
+                                inserted_applications += 1
+                            except mysql.connector.Error as e2:
+                                error_msg = f"Error inserting application {batch_start + i}: {e2}"
+                                print(error_msg)
+                                errors.append(error_msg)
+                                continue
+                except Exception as e:
+                    error_msg = f"Error processing record {batch_start + i}: {str(e)}"
+                    print(error_msg)
+                    errors.append(error_msg)
+                    continue
+            
+            # Commit batch
+            try:
+                connection.commit()
+                print(f"Batch {batch_num} committed: {inserted_applications} applications inserted so far")
+            except Exception as e:
+                connection.rollback()
+                error_msg = f"Error committing batch {batch_num}: {e}"
+                print(error_msg)
+                errors.append(error_msg)
+                # Continue with next batch even if this one failed
         
-        connection.commit()
-        print(f"Successfully inserted {inserted_clients} clients and {inserted_applications} applications")
-        return True
+        print(f"\n{'='*60}")
+        print(f"Insertion Summary:")
+        print(f"  Clients inserted: {inserted_clients}")
+        print(f"  Applications inserted: {inserted_applications}")
+        if errors:
+            print(f"  Errors encountered: {len(errors)}")
+            print(f"  First few errors: {errors[:3]}")
+        print(f"{'='*60}")
+        
+        # Return True if at least some records were inserted
+        return inserted_applications > 0
         
     except Exception as e:
         connection.rollback()
         print(f"Error inserting data: {e}")
+        import traceback
+        traceback.print_exc()
         return False
     finally:
         cursor.close()

@@ -448,8 +448,19 @@ def insert_training_data():
             }), 500
         
         app.logger.info("Inserting data into database...")
-        success = insert_mock_data(connection, data)
-        connection.close()
+        try:
+            success = insert_mock_data(connection, data, batch_size=50)
+        except Exception as insert_error:
+            app.logger.error(f"Insert error: {insert_error}")
+            import traceback
+            app.logger.error(traceback.format_exc())
+            connection.close()
+            return jsonify({
+                'success': False,
+                'error': f'Insertion failed: {str(insert_error)}. Check logs for details.'
+            }), 500
+        finally:
+            connection.close()
         
         if success:
             # Count inserted records
@@ -484,9 +495,13 @@ def insert_training_data():
         
     except Exception as e:
         app.logger.error(f"Error inserting training data: {e}")
+        import traceback
+        error_trace = traceback.format_exc()
+        app.logger.error(f"Full traceback: {error_trace}")
         return jsonify({
             'success': False,
-            'error': f'Insertion failed: {str(e)}'
+            'error': f'Insertion failed: {str(e)}',
+            'details': str(e) if len(str(e)) < 200 else str(e)[:200] + '...'
         }), 500
 
 @app.route('/api/check', methods=['GET'])

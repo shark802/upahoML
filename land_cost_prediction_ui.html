@@ -1,0 +1,591 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Land Cost Prediction System</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            font-size: 1.1em;
+            opacity: 0.9;
+        }
+
+        .content {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 30px;
+            padding: 30px;
+        }
+
+        .form-section, .result-section {
+            background: #f8f9fa;
+            padding: 25px;
+            border-radius: 10px;
+        }
+
+        .form-section h2, .result-section h2 {
+            color: #667eea;
+            margin-bottom: 20px;
+            font-size: 1.5em;
+            border-bottom: 2px solid #667eea;
+            padding-bottom: 10px;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            color: #333;
+            font-weight: 600;
+        }
+
+        input, select {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 1em;
+            transition: border-color 0.3s;
+        }
+
+        input:focus, select:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .form-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+        }
+
+        .btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 15px 30px;
+            border: none;
+            border-radius: 8px;
+            font-size: 1.1em;
+            font-weight: 600;
+            cursor: pointer;
+            width: 100%;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn:active {
+            transform: translateY(0);
+        }
+
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .result-section {
+            display: none;
+        }
+
+        .result-section.show {
+            display: block;
+        }
+
+        .prediction-card {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 15px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+
+        .prediction-card h3 {
+            color: #667eea;
+            margin-bottom: 15px;
+        }
+
+        .prediction-value {
+            font-size: 2em;
+            font-weight: bold;
+            color: #764ba2;
+            margin: 10px 0;
+        }
+
+        .prediction-label {
+            color: #666;
+            font-size: 0.9em;
+            margin-bottom: 5px;
+        }
+
+        .location-badge {
+            display: inline-block;
+            padding: 5px 15px;
+            border-radius: 20px;
+            font-size: 0.9em;
+            font-weight: 600;
+            margin-top: 10px;
+        }
+
+        .badge-premium {
+            background: #ffd700;
+            color: #333;
+        }
+
+        .badge-standard {
+            background: #4caf50;
+            color: white;
+        }
+
+        .badge-economy {
+            background: #2196f3;
+            color: white;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            display: none;
+        }
+
+        .loading.show {
+            display: block;
+        }
+
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .error {
+            background: #ffebee;
+            color: #c62828;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            border-left: 4px solid #c62828;
+        }
+
+        .yearly-breakdown {
+            max-height: 300px;
+            overflow-y: auto;
+            margin-top: 15px;
+        }
+
+        .year-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 10px;
+            border-bottom: 1px solid #e0e0e0;
+        }
+
+        .year-item:last-child {
+            border-bottom: none;
+        }
+
+        .scenarios {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 10px;
+            margin-top: 15px;
+        }
+
+        .scenario-card {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            text-align: center;
+        }
+
+        .scenario-optimistic {
+            border-top: 4px solid #4caf50;
+        }
+
+        .scenario-realistic {
+            border-top: 4px solid #667eea;
+        }
+
+        .scenario-conservative {
+            border-top: 4px solid #ff9800;
+        }
+
+        @media (max-width: 768px) {
+            .content {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🏠 Land Cost Prediction System</h1>
+            <p>Predict land costs for current and future years (5-10 years) with location analysis</p>
+        </div>
+
+        <div class="content">
+            <!-- Form Section -->
+            <div class="form-section">
+                <h2>📝 Enter Land Details</h2>
+                <form id="predictionForm">
+                    <div class="form-group">
+                        <label for="lot_area">Lot Area (sqm) *</label>
+                        <input type="number" id="lot_area" name="lot_area" required min="1" value="200">
+                    </div>
+
+                    <div class="form-group">
+                        <label for="project_area">Project Area (sqm) *</label>
+                        <input type="number" id="project_area" name="project_area" required min="1" value="150">
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="project_type">Project Type *</label>
+                            <select id="project_type" name="project_type" required>
+                                <option value="residential">Residential</option>
+                                <option value="commercial">Commercial</option>
+                                <option value="industrial">Industrial</option>
+                                <option value="agricultural">Agricultural</option>
+                                <option value="mixed-use">Mixed-Use</option>
+                                <option value="institutional">Institutional</option>
+                                <option value="recreational">Recreational</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="location">Location *</label>
+                            <select id="location" name="location" required>
+                                <option value="Downtown">Downtown</option>
+                                <option value="Urban Core">Urban Core</option>
+                                <option value="Commercial District">Commercial District</option>
+                                <option value="Suburban">Suburban</option>
+                                <option value="Residential Area">Residential Area</option>
+                                <option value="Mixed Zone">Mixed Zone</option>
+                                <option value="Industrial Zone">Industrial Zone</option>
+                                <option value="Rural">Rural</option>
+                                <option value="Barangay 1">Barangay 1</option>
+                                <option value="Barangay 2">Barangay 2</option>
+                                <option value="Barangay 3">Barangay 3</option>
+                                <option value="Barangay 4">Barangay 4</option>
+                                <option value="Barangay 5">Barangay 5</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="age">Age</label>
+                            <input type="number" id="age" name="age" min="18" max="100" value="35">
+                        </div>
+
+                        <div class="form-group">
+                            <label for="target_years">Project Years Ahead</label>
+                            <select id="target_years" name="target_years">
+                                <option value="5">5 Years</option>
+                                <option value="10" selected>10 Years</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <button type="submit" class="btn" id="predictBtn">
+                        🔮 Predict Land Cost
+                    </button>
+                </form>
+
+                <div class="loading" id="loading">
+                    <div class="spinner"></div>
+                    <p>Calculating prediction...</p>
+                </div>
+            </div>
+
+            <!-- Results Section -->
+            <div class="result-section" id="resultSection">
+                <h2>📊 Prediction Results</h2>
+                <div id="errorMessage" class="error" style="display: none;"></div>
+                
+                <!-- Current Prediction -->
+                <div class="prediction-card">
+                    <h3>💰 Current Year Prediction</h3>
+                    <div class="prediction-label">Cost per Square Meter</div>
+                    <div class="prediction-value" id="currentCostPerSqm">-</div>
+                    <div class="prediction-label">Total Land Value</div>
+                    <div class="prediction-value" id="currentTotalValue">-</div>
+                    <div id="locationInfo"></div>
+                </div>
+
+                <!-- Future Prediction -->
+                <div class="prediction-card">
+                    <h3>🔮 Future Prediction (<span id="targetYear">-</span>)</h3>
+                    <div id="trendIndicator" style="padding: 10px; border-radius: 8px; margin-bottom: 15px; text-align: center; font-weight: 600;"></div>
+                    <div class="prediction-label">Cost per Square Meter</div>
+                    <div class="prediction-value" id="futureCostPerSqm">-</div>
+                    <div class="prediction-label">Total Land Value</div>
+                    <div class="prediction-value" id="futureTotalValue">-</div>
+                    <div class="prediction-label">Yearly Rate</div>
+                    <div class="prediction-value" id="appreciationRate" style="font-size: 1.5em;">-</div>
+                    <div class="prediction-label">Total Change</div>
+                    <div class="prediction-value" id="totalAppreciation" style="font-size: 1.5em;">-</div>
+                </div>
+
+                <!-- Scenarios -->
+                <div class="prediction-card">
+                    <h3>📈 Prediction Scenarios</h3>
+                    <div class="scenarios">
+                        <div class="scenario-card scenario-optimistic">
+                            <strong>Optimistic</strong>
+                            <div class="prediction-value" style="font-size: 1.2em;" id="optimisticCost">-</div>
+                            <div style="font-size: 0.8em; color: #666;">+<span id="optimisticAppr">-</span>%</div>
+                        </div>
+                        <div class="scenario-card scenario-realistic">
+                            <strong>Realistic</strong>
+                            <div class="prediction-value" style="font-size: 1.2em;" id="realisticCost">-</div>
+                            <div style="font-size: 0.8em; color: #666;">+<span id="realisticAppr">-</span>%</div>
+                        </div>
+                        <div class="scenario-card scenario-conservative">
+                            <strong>Conservative</strong>
+                            <div class="prediction-value" style="font-size: 1.2em;" id="conservativeCost">-</div>
+                            <div style="font-size: 0.8em; color: #666;">+<span id="conservativeAppr">-</span>%</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Yearly Breakdown -->
+                <div class="prediction-card">
+                    <h3>📅 Yearly Breakdown</h3>
+                    <div class="yearly-breakdown" id="yearlyBreakdown"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        document.getElementById('predictionForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const formData = {
+                prediction_type: 'land_cost_future',
+                target_years: parseInt(document.getElementById('target_years').value),
+                data: {
+                    lot_area: parseFloat(document.getElementById('lot_area').value),
+                    project_area: parseFloat(document.getElementById('project_area').value),
+                    project_type: document.getElementById('project_type').value,
+                    location: document.getElementById('location').value,
+                    year: new Date().getFullYear(),
+                    month: new Date().getMonth() + 1,
+                    age: parseInt(document.getElementById('age').value) || 35
+                }
+            };
+
+            // Show loading
+            document.getElementById('loading').classList.add('show');
+            document.getElementById('resultSection').classList.remove('show');
+            document.getElementById('predictBtn').disabled = true;
+            document.getElementById('errorMessage').style.display = 'none';
+
+            try {
+                const response = await fetch('predict_land_cost.php', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(formData)
+                });
+
+                const result = await response.json();
+
+                document.getElementById('loading').classList.remove('show');
+                document.getElementById('predictBtn').disabled = false;
+
+                if (result.success && result.prediction) {
+                    displayResults(result.prediction);
+                } else {
+                    showError(result.error || 'Prediction failed. Please try again.');
+                }
+            } catch (error) {
+                document.getElementById('loading').classList.remove('show');
+                document.getElementById('predictBtn').disabled = false;
+                showError('Network error: ' + error.message);
+            }
+        });
+
+        function displayResults(prediction) {
+            const current = prediction.current_prediction;
+            const future = prediction.future_prediction;
+            const location = prediction.location_factors;
+            const scenarios = prediction.scenarios;
+
+            // Current prediction
+            document.getElementById('currentCostPerSqm').textContent = 
+                formatCurrency(current.cost_per_sqm) + ' PHP/sqm';
+            document.getElementById('currentTotalValue').textContent = 
+                formatCurrency(current.total_value) + ' PHP';
+
+            // Location info
+            const locationBadge = location.category === 'premium' ? 'badge-premium' : 
+                                location.category === 'economy' ? 'badge-economy' : 'badge-standard';
+            document.getElementById('locationInfo').innerHTML = `
+                <div class="location-badge ${locationBadge}">
+                    ${location.description}
+                </div>
+            `;
+
+            // Future prediction
+            document.getElementById('targetYear').textContent = future.target_year;
+            document.getElementById('futureCostPerSqm').textContent = 
+                formatCurrency(future.cost_per_sqm) + ' PHP/sqm';
+            document.getElementById('futureTotalValue').textContent = 
+                formatCurrency(future.total_value) + ' PHP';
+            
+            // Trend indicator
+            const trendIndicator = document.getElementById('trendIndicator');
+            const changePercent = (future.total_appreciation * 100).toFixed(1);
+            const valueChange = future.total_value - current.total_value;
+            
+            if (future.is_increasing) {
+                trendIndicator.style.background = '#e8f5e9';
+                trendIndicator.style.color = '#2e7d32';
+                trendIndicator.innerHTML = `
+                    📈 <strong>VALUE INCREASING</strong><br>
+                    <span style="font-size: 1.2em;">+${formatCurrency(Math.abs(valueChange))} PHP</span><br>
+                    <span style="font-size: 0.9em;">Expected to increase by ${changePercent}% over ${future.years_projected} years</span>
+                `;
+            } else {
+                trendIndicator.style.background = '#ffebee';
+                trendIndicator.style.color = '#c62828';
+                trendIndicator.innerHTML = `
+                    📉 <strong>VALUE DECREASING</strong><br>
+                    <span style="font-size: 1.2em;">-${formatCurrency(Math.abs(valueChange))} PHP</span><br>
+                    <span style="font-size: 0.9em;">Expected to decrease by ${Math.abs(changePercent)}% over ${future.years_projected} years</span>
+                `;
+            }
+            
+            // Show rate with direction
+            const ratePercent = (future.appreciation_rate * 100).toFixed(2);
+            const rateText = future.is_increasing ? 
+                `+${ratePercent}% per year` : 
+                `${ratePercent}% per year`;
+            document.getElementById('appreciationRate').textContent = rateText;
+            document.getElementById('appreciationRate').style.color = 
+                future.is_increasing ? '#4caf50' : '#f44336';
+            
+            // Show total change with direction
+            const changeText = future.is_increasing ? 
+                `+${changePercent}%` : 
+                `${changePercent}%`;
+            document.getElementById('totalAppreciation').textContent = changeText;
+            document.getElementById('totalAppreciation').style.color = 
+                future.is_increasing ? '#4caf50' : '#f44336';
+
+            // Scenarios with trend indicators
+            const optAppr = (scenarios.optimistic.total_appreciation * 100).toFixed(1);
+            document.getElementById('optimisticCost').textContent = 
+                formatCurrency(scenarios.optimistic.cost_per_sqm);
+            document.getElementById('optimisticAppr').textContent = 
+                scenarios.optimistic.trend === 'increasing' ? `+${optAppr}%` : `${optAppr}%`;
+            document.getElementById('optimisticAppr').style.color = 
+                scenarios.optimistic.trend === 'increasing' ? '#4caf50' : '#f44336';
+            
+            const realAppr = (scenarios.realistic.total_appreciation * 100).toFixed(1);
+            document.getElementById('realisticCost').textContent = 
+                formatCurrency(scenarios.realistic.cost_per_sqm);
+            document.getElementById('realisticAppr').textContent = 
+                scenarios.realistic.trend === 'increasing' ? `+${realAppr}%` : `${realAppr}%`;
+            document.getElementById('realisticAppr').style.color = 
+                scenarios.realistic.trend === 'increasing' ? '#4caf50' : '#f44336';
+            
+            const consAppr = (scenarios.conservative.total_appreciation * 100).toFixed(1);
+            document.getElementById('conservativeCost').textContent = 
+                formatCurrency(scenarios.conservative.cost_per_sqm);
+            document.getElementById('conservativeAppr').textContent = 
+                scenarios.conservative.trend === 'increasing' ? `+${consAppr}%` : `${consAppr}%`;
+            document.getElementById('conservativeAppr').style.color = 
+                scenarios.conservative.trend === 'increasing' ? '#4caf50' : '#f44336';
+
+            // Yearly breakdown with change indicators
+            const breakdown = document.getElementById('yearlyBreakdown');
+            breakdown.innerHTML = '';
+            const firstYear = prediction.yearly_breakdown[0];
+            prediction.yearly_breakdown.forEach((year, index) => {
+                const div = document.createElement('div');
+                div.className = 'year-item';
+                const change = year.change_from_current * 100;
+                const changeText = change >= 0 ? 
+                    `<span style="color: #4caf50;">+${change.toFixed(1)}%</span>` : 
+                    `<span style="color: #f44336;">${change.toFixed(1)}%</span>`;
+                div.innerHTML = `
+                    <span><strong>${year.year}</strong></span>
+                    <span>${formatCurrency(year.cost_per_sqm)} PHP/sqm ${changeText}</span>
+                    <span><strong>${formatCurrency(year.total_value)} PHP</strong></span>
+                `;
+                breakdown.appendChild(div);
+            });
+
+            // Show results
+            document.getElementById('resultSection').classList.add('show');
+        }
+
+        function showError(message) {
+            document.getElementById('errorMessage').textContent = message;
+            document.getElementById('errorMessage').style.display = 'block';
+            document.getElementById('resultSection').classList.add('show');
+        }
+
+        function formatCurrency(value) {
+            return new Intl.NumberFormat('en-PH', {
+                minimumFractionDigits: 2,
+                maximumFractionDigits: 2
+            }).format(value);
+        }
+    </script>
+</body>
+</html>
+

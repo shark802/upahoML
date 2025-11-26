@@ -401,6 +401,94 @@ def train_models():
             'error': f'Training failed: {str(e)}'
         }), 500
 
+@app.route('/api/insert_training_data', methods=['POST', 'GET'])
+def insert_training_data():
+    """Insert mock training data into database"""
+    try:
+        app.logger.info("Training data insertion request received")
+        
+        # Get number of records to generate (default 500)
+        num_records = request.args.get('num_records', 500, type=int)
+        if num_records > 5000:
+            num_records = 5000  # Limit to prevent overload
+        
+        # Check database connection
+        db_config = get_db_config()
+        try:
+            import mysql.connector
+            test_conn = mysql.connector.connect(
+                host=db_config.get('host'),
+                user=db_config.get('user'),
+                password=db_config.get('password'),
+                database=db_config.get('database'),
+                port=db_config.get('port', 3306),
+                connect_timeout=10
+            )
+            test_conn.close()
+            app.logger.info("Database connection verified")
+        except Exception as db_error:
+            return jsonify({
+                'success': False, 
+                'error': f'Database connection failed: {str(db_error)}'
+            }), 500
+        
+        # Import and use generate_mock_data
+        from generate_mock_data import generate_mock_data, insert_mock_data, connect_database
+        
+        # Generate data
+        app.logger.info(f"Generating {num_records} mock records...")
+        data = generate_mock_data(num_records)
+        
+        # Connect and insert
+        connection = connect_database(db_config)
+        if not connection:
+            return jsonify({
+                'success': False,
+                'error': 'Failed to connect to database'
+            }), 500
+        
+        app.logger.info("Inserting data into database...")
+        success = insert_mock_data(connection, data)
+        connection.close()
+        
+        if success:
+            # Count inserted records
+            try:
+                conn = mysql.connector.connect(
+                    host=db_config.get('host'),
+                    user=db_config.get('user'),
+                    password=db_config.get('password'),
+                    database=db_config.get('database'),
+                    port=db_config.get('port', 3306),
+                    connect_timeout=10
+                )
+                cursor = conn.cursor()
+                cursor.execute("SELECT COUNT(*) FROM application_forms WHERE project_cost_numeric IS NOT NULL AND lot_area IS NOT NULL AND lot_area > 0")
+                total_records = cursor.fetchone()[0]
+                cursor.close()
+                conn.close()
+            except:
+                total_records = None
+            
+            return jsonify({
+                'success': True,
+                'message': f'Successfully inserted {len(data)} training records',
+                'records_inserted': len(data),
+                'total_records_in_db': total_records
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error': 'Failed to insert data. Check logs for details.'
+            }), 500
+        
+    except Exception as e:
+        app.logger.error(f"Error inserting training data: {e}")
+        return jsonify({
+            'success': False,
+            'error': f'Insertion failed: {str(e)}'
+        }), 500
+
 @app.route('/api/check', methods=['GET'])
 def check_status():
     """Check database connection and model status"""

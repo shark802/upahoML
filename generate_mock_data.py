@@ -12,27 +12,33 @@ import os
 
 # Database configuration
 def get_db_config():
-    """Get database configuration"""
+    """Get database configuration from environment or config file"""
     config_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config.json')
     if os.path.exists(config_file):
         with open(config_file, 'r') as f:
-            return json.load(f)
+            config = json.load(f)
+            if 'port' not in config:
+                config['port'] = 3306
+            return config
     else:
+        # Use environment variables (for Heroku/Docker)
         return {
-            'host': 'localhost',
-            'user': 'root',
-            'password': '',
-            'database': 'u520834156_dbUPAHOZoning'
+            'host': os.environ.get('DB_HOST', 'srv1322.hstgr.io'),
+            'user': os.environ.get('DB_USER', 'u520834156_uPAHOZone25'),
+            'password': os.environ.get('DB_PASSWORD', 'Y+;a+*1y'),
+            'database': os.environ.get('DB_NAME', 'u520834156_dbUPAHOZoning'),
+            'port': int(os.environ.get('DB_PORT', 3306))
         }
 
 def connect_database(db_config):
     """Connect to MySQL database"""
     try:
         connection = mysql.connector.connect(
-            host=db_config.get('host', 'localhost'),
-            user=db_config.get('user', 'root'),
-            password=db_config.get('password', ''),
+            host=db_config.get('host', 'srv1322.hstgr.io'),
+            user=db_config.get('user', 'u520834156_uPAHOZone25'),
+            password=db_config.get('password', 'Y+;a+*1y'),
             database=db_config.get('database', 'u520834156_dbUPAHOZoning'),
+            port=db_config.get('port', 3306),
             charset='utf8mb4',
             connect_timeout=10
         )
@@ -250,23 +256,53 @@ def insert_mock_data(connection, data):
                 inserted_clients += 1
             
             # Insert application form
-            cursor.execute("""
-                INSERT INTO application_forms 
-                (project_type, project_nature, project_location, project_area, 
-                 lot_area, project_cost_numeric, created_at, updated_at, client_id, status)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            """, (
-                record['project_type'],
-                record['project_nature'],
-                record['project_location'],
-                record['project_area'],
-                record['lot_area'],
-                record['project_cost_numeric'],
-                record['created_at'],
-                record['created_at'] + timedelta(days=random.randint(5, 60)),
-                client_id,
-                random.choice(['approved', 'pending', 'rejected'])
-            ))
+            # Use ON DUPLICATE KEY UPDATE or IGNORE to handle duplicates
+            try:
+                cursor.execute("""
+                    INSERT INTO application_forms 
+                    (project_type, project_nature, project_location, project_area, 
+                     lot_area, project_cost_numeric, created_at, updated_at, client_id, status)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ON DUPLICATE KEY UPDATE updated_at = VALUES(updated_at)
+                """, (
+                    record['project_type'],
+                    record['project_nature'],
+                    record['project_location'],
+                    record['project_area'],
+                    record['lot_area'],
+                    record['project_cost_numeric'],
+                    record['created_at'],
+                    record['created_at'] + timedelta(days=random.randint(5, 60)),
+                    client_id,
+                    random.choice(['approved', 'pending', 'rejected'])
+                ))
+            except mysql.connector.Error as e:
+                # If ON DUPLICATE KEY not supported, try without it
+                if 'Duplicate entry' in str(e):
+                    continue  # Skip duplicate
+                else:
+                    # Try without ON DUPLICATE KEY
+                    try:
+                        cursor.execute("""
+                            INSERT INTO application_forms 
+                            (project_type, project_nature, project_location, project_area, 
+                             lot_area, project_cost_numeric, created_at, updated_at, client_id, status)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        """, (
+                            record['project_type'],
+                            record['project_nature'],
+                            record['project_location'],
+                            record['project_area'],
+                            record['lot_area'],
+                            record['project_cost_numeric'],
+                            record['created_at'],
+                            record['created_at'] + timedelta(days=random.randint(5, 60)),
+                            client_id,
+                            random.choice(['approved', 'pending', 'rejected'])
+                        ))
+                    except mysql.connector.Error as e2:
+                        print(f"Error inserting application {i}: {e2}")
+                        continue
             inserted_applications += 1
         
         connection.commit()

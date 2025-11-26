@@ -339,19 +339,59 @@ def train_models():
         app.logger.info("Starting model training...")
         results = lp.train_all_models()
         
+        # Check if training actually produced results
+        if not results or (isinstance(results, dict) and len(results) == 0):
+            # Check if there's data in database
+            try:
+                conn = mysql.connector.connect(
+                    host=db_config.get('host'),
+                    user=db_config.get('user'),
+                    password=db_config.get('password'),
+                    database=db_config.get('database'),
+                    port=db_config.get('port', 3306),
+                    connect_timeout=10
+                )
+                cursor = conn.cursor()
+                cursor.execute("SELECT COUNT(*) FROM application_forms WHERE project_cost_numeric IS NOT NULL AND lot_area IS NOT NULL AND lot_area > 0")
+                count = cursor.fetchone()[0]
+                cursor.close()
+                conn.close()
+                
+                if count == 0:
+                    return jsonify({
+                        'success': False,
+                        'error': 'No training data available. Database has no records with cost data (project_cost_numeric and lot_area).',
+                        'database_records': count
+                    }), 500
+                else:
+                    return jsonify({
+                        'success': False,
+                        'error': 'Training completed but no results returned. Check logs for details.',
+                        'database_records': count,
+                        'results': results
+                    }), 500
+            except Exception as e:
+                return jsonify({
+                    'success': False,
+                    'error': f'Error checking database: {str(e)}'
+                }), 500
+        
         if 'error' in results:
             return jsonify({
                 'success': False,
-                'error': results['error']
+                'error': results.get('error', 'Training failed'),
+                'results': results
             }), 500
         
         # Reload models after training
-        lp.load_models(verbose=True)
+        models_loaded = lp.load_models(verbose=True)
         
         return jsonify({
             'success': True,
             'message': 'Models trained successfully',
-            'results': results
+            'results': results,
+            'models_loaded': models_loaded,
+            'model_files': len(lp.models) if hasattr(lp, 'models') else 0
         })
         
     except Exception as e:

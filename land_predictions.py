@@ -892,13 +892,31 @@ class LandPredictions:
         # Train land cost model
         print("\n[1/2] Training Land Cost Prediction Model...")
         cost_results = self.train_land_cost_model('linear')
-        if 'error' not in cost_results:
-            results['land_cost'] = cost_results
         
-        # Save models
-        print("\nSaving models...")
-        self.save_models()
-        self.save_model_metadata()
+        if cost_results:
+            if 'error' in cost_results:
+                results['error'] = cost_results['error']
+                print(f"Training error: {cost_results['error']}")
+            else:
+                results['land_cost'] = cost_results
+                print(f"Training successful: {cost_results}")
+        else:
+            results['error'] = 'Training returned no results - check database has sufficient data'
+            print("Training returned no results")
+        
+        # Save models if training was successful
+        if 'land_cost' in results:
+            print("\nSaving models...")
+            try:
+                self.save_models()
+                self.save_model_metadata()
+                results['models_saved'] = True
+            except Exception as e:
+                results['save_error'] = str(e)
+                print(f"Error saving models: {e}")
+        else:
+            print("\nSkipping model save - training failed")
+            results['models_saved'] = False
         
         print("\n" + "=" * 60)
         print("Model Training Completed!")
@@ -910,9 +928,9 @@ class LandPredictions:
 # Main execution
 if __name__ == "__main__":
     db_config = {
-        'host': 'localhost',
-        'user': 'root',
-        'password': '',
+        'host': 'srv1322.hstgr.io',
+        'user': 'u520834156_uPAHOZone25',
+        'password': 'Y+;a+*1y',
         'database': 'u520834156_dbUPAHOZoning'
     }
     

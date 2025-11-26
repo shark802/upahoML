@@ -29,15 +29,21 @@ def get_db_config():
     
     if os.path.exists(config_file):
         with open(config_file, 'r') as f:
-            return json.load(f)
+            config = json.load(f)
+            # Add port if not specified
+            if 'port' not in config:
+                config['port'] = 3306
+            return config
     else:
         # Use environment variables (Heroku config vars)
-        return {
+        config = {
             'host': os.environ.get('DB_HOST', 'localhost'),
             'user': os.environ.get('DB_USER', 'root'),
             'password': os.environ.get('DB_PASSWORD', ''),
-            'database': os.environ.get('DB_NAME', 'u520834156_dbUPAHOZoning')
+            'database': os.environ.get('DB_NAME', 'u520834156_dbUPAHOZoning'),
+            'port': int(os.environ.get('DB_PORT', 3306))
         }
+        return config
 
 def init_land_predictions(auto_train=True):
     """Initialize land predictions model with auto-training if needed"""
@@ -49,18 +55,44 @@ def init_land_predictions(auto_train=True):
             # Test database connection first
             try:
                 import mysql.connector
+                db_host = db_config.get('host', 'localhost')
+                
+                # Check if using localhost (won't work on Heroku)
+                if db_host == 'localhost' or db_host == '127.0.0.1':
+                    raise Exception(
+                        "Cannot connect to 'localhost' from Heroku. "
+                        "You need a cloud database (AWS RDS, Heroku Postgres, or remote MySQL). "
+                        "Set DB_HOST to your cloud database hostname. "
+                        "Current DB_HOST: localhost"
+                    )
+                
                 test_conn = mysql.connector.connect(
-                    host=db_config.get('host', 'localhost'),
+                    host=db_host,
                     user=db_config.get('user', 'root'),
                     password=db_config.get('password', ''),
                     database=db_config.get('database', 'u520834156_dbUPAHOZoning'),
-                    connect_timeout=5
+                    connect_timeout=10,
+                    port=db_config.get('port', 3306)
                 )
                 test_conn.close()
-                app.logger.info("Database connection successful")
+                app.logger.info(f"Database connection successful to {db_host}")
+            except mysql.connector.Error as db_error:
+                error_msg = str(db_error)
+                if '2003' in error_msg or 'Can\'t connect' in error_msg:
+                    raise Exception(
+                        f"Database connection failed (Error 2003): Cannot connect to MySQL server at '{db_config.get('host')}'. "
+                        f"Possible causes: "
+                        f"1) Database host is incorrect or unreachable from Heroku, "
+                        f"2) Database server is not running, "
+                        f"3) Firewall is blocking Heroku IPs, "
+                        f"4) Using 'localhost' (won't work on Heroku - need cloud database). "
+                        f"Check your DB_HOST environment variable."
+                    )
+                else:
+                    raise Exception(f"Database connection error: {error_msg}")
             except Exception as db_error:
                 app.logger.error(f"Database connection failed: {db_error}")
-                raise Exception(f"Database connection error: {db_error}")
+                raise
             
             land_predictions = LandPredictions(db_config)
             
@@ -339,27 +371,40 @@ def check_status():
         db_status = {'connected': False, 'error': None}
         try:
             import mysql.connector
-            conn = mysql.connector.connect(
-                host=db_config.get('host', 'localhost'),
-                user=db_config.get('user', 'root'),
-                password=db_config.get('password', ''),
-                database=db_config.get('database', 'u520834156_dbUPAHOZoning'),
-                connect_timeout=5
-            )
+            db_host = db_config.get('host', 'localhost')
             
-            # Test query
-            cursor = conn.cursor()
-            cursor.execute("SELECT COUNT(*) FROM application_forms LIMIT 1")
-            count = cursor.fetchone()[0]
-            cursor.close()
-            conn.close()
-            
-            db_status = {
-                'connected': True,
-                'records_available': count,
-                'host': db_config.get('host'),
-                'database': db_config.get('database')
-            }
+            # Check if using localhost (won't work on Heroku)
+            if db_host == 'localhost' or db_host == '127.0.0.1':
+                db_status = {
+                    'connected': False,
+                    'error': 'Cannot connect to localhost from Heroku. Need cloud database. Set DB_HOST to your remote database hostname.',
+                    'host': db_host,
+                    'database': db_config.get('database')
+                }
+            else:
+                conn = mysql.connector.connect(
+                    host=db_host,
+                    user=db_config.get('user', 'root'),
+                    password=db_config.get('password', ''),
+                    database=db_config.get('database', 'u520834156_dbUPAHOZoning'),
+                    port=db_config.get('port', 3306),
+                    connect_timeout=10
+                )
+                
+                # Test query
+                cursor = conn.cursor()
+                cursor.execute("SELECT COUNT(*) FROM application_forms LIMIT 1")
+                count = cursor.fetchone()[0]
+                cursor.close()
+                conn.close()
+                
+                db_status = {
+                    'connected': True,
+                    'records_available': count,
+                    'host': db_host,
+                    'port': db_config.get('port', 3306),
+                    'database': db_config.get('database')
+                }
         except Exception as e:
             db_status = {
                 'connected': False,

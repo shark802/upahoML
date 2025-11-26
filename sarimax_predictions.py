@@ -44,11 +44,11 @@ def get_db_connection():
         # Default configuration
         config = {
             'host': 'localhost',
-            'user': 'root',
-            'password': '',
+            'user': 'u520834156_uPAHOZone25',
+            'password': 'Y+;a+*1y',
             'database': 'u520834156_dbUPAHOZoning'
         }
-    
+ 
     try:
         conn = mysql.connector.connect(
             host=config['host'],

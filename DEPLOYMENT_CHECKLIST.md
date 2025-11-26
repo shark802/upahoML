@@ -44,10 +44,10 @@ heroku login
 heroku create your-app-name
 
 # 3. Set database config
-heroku config:set DB_HOST=your-host
-heroku config:set DB_USER=your-user
-heroku config:set DB_PASSWORD=your-password
-heroku config:set DB_NAME=your-database
+heroku config:set DB_HOST=localhost
+heroku config:set DB_USER=u520834156_uPAHOZone25
+heroku config:set DB_PASSWORD=Y+;a+*1y
+heroku config:set DB_NAME=u520834156_dbUPAHOZoning
 
 # 4. Deploy
 git add .

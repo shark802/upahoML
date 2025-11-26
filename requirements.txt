@@ -1,4 +1,4 @@
-# Core Data Science Libraries
+# Core Data Science Libraries (required)
 pandas>=2.0.0
 numpy>=1.24.0
 scikit-learn>=1.3.0
@@ -8,16 +8,20 @@ joblib>=1.3.0
 mysql-connector-python>=8.1.0
 
 # Machine Learning - Advanced Models
+# Note: XGBoost can be large but is commonly used
 xgboost>=2.0.0
 statsmodels>=0.14.0
 pmdarima>=2.0.0
 
 # Time Series Forecasting
-prophet>=1.1.0
+# Prophet removed to reduce slug size (~100-200MB saved)
+# Code will fall back to ARIMA if Prophet is not available
+# prophet>=1.1.0
 
-# Deep Learning (Optional - for LSTM, can be removed if not needed)
-# Note: TensorFlow is large (~500MB), consider removing if not using LSTM
-tensorflow>=2.13.0
+# Deep Learning (REMOVED - TensorFlow is ~500MB+ and causes slug size issues)
+# The code handles missing TensorFlow gracefully
+# If you need LSTM, consider using a separate service or lighter alternative
+# tensorflow>=2.13.0
 
 # Web Framework (for Heroku deployment)
 gunicorn>=21.2.0

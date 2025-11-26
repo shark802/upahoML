@@ -43,7 +43,7 @@ def get_db_connection():
     else:
         # Default configuration
         config = {
-            'host': 'localhost',
+            'host': '153.92.15.8',
             'user': 'u520834156_uPAHOZone25',
             'password': 'Y+;a+*1y',
             'database': 'u520834156_dbUPAHOZoning'

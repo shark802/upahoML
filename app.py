@@ -7,7 +7,7 @@ Deployed on Heroku
 import os
 import json
 import sys
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 
 # Add current directory to path
@@ -69,7 +69,12 @@ def init_ml_analytics():
 
 @app.route('/')
 def index():
-    """Health check endpoint"""
+    """Serve the land cost prediction UI"""
+    return send_from_directory(os.path.dirname(__file__), 'land_cost_prediction_ui.html')
+
+@app.route('/api')
+def api_info():
+    """API information endpoint"""
     return jsonify({
         'status': 'ok',
         'service': 'UPAHO Land Cost Prediction API',

@@ -432,12 +432,17 @@
             document.getElementById('errorMessage').style.display = 'none';
 
             try {
-                const response = await fetch('predict_land_cost.php', {
+                // Use Flask API endpoint instead of PHP
+                const apiUrl = window.location.origin + '/predict/land_cost_future';
+                const response = await fetch(apiUrl, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
                     },
-                    body: JSON.stringify(formData)
+                    body: JSON.stringify({
+                        target_years: formData.target_years,
+                        data: formData.data
+                    })
                 });
 
                 const result = await response.json();

@@ -1,0 +1,35 @@
+version: '3.8'
+
+services:
+  web:
+    build: .
+    container_name: upaho-ml-api
+    ports:
+      - "5000:5000"
+    environment:
+      # Database Configuration
+      - DB_HOST=${DB_HOST:-srv1322.hstgr.io}
+      - DB_USER=${DB_USER:-u520834156_uPAHOZone25}
+      - DB_PASSWORD=${DB_PASSWORD:-Y+;a+*1y}
+      - DB_NAME=${DB_NAME:-u520834156_dbUPAHOZoning}
+      - DB_PORT=${DB_PORT:-3306}
+      # App Configuration
+      - PORT=5000
+      - FLASK_ENV=production
+    volumes:
+      # Mount models directory to persist trained models
+      - ./models:/app/models
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:5000/api/check')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - upaho-network
+
+networks:
+  upaho-network:
+    driver: bridge
+

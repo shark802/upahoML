@@ -1,0 +1,49 @@
+version: '3.8'
+
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: upaho-ml-api-prod
+    ports:
+      - "5000:5000"
+    environment:
+      # Database Configuration - Set these via environment or .env file
+      - DB_HOST=${DB_HOST}
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_NAME=${DB_NAME}
+      - DB_PORT=${DB_PORT:-3306}
+      # App Configuration
+      - PORT=5000
+      - FLASK_ENV=production
+    volumes:
+      # Persist models between container restarts
+      - models-data:/app/models
+    restart: always
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:5000/api/check')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - upaho-network
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+
+volumes:
+  models-data:
+    driver: local
+
+networks:
+  upaho-network:
+    driver: bridge
+

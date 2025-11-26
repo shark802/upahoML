@@ -39,15 +39,51 @@ def get_db_config():
             'database': os.environ.get('DB_NAME', 'u520834156_dbUPAHOZoning')
         }
 
-def init_land_predictions():
-    """Initialize land predictions model"""
+def init_land_predictions(auto_train=True):
+    """Initialize land predictions model with auto-training if needed"""
     global land_predictions
     if land_predictions is None:
         try:
             db_config = get_db_config()
+            
+            # Test database connection first
+            try:
+                import mysql.connector
+                test_conn = mysql.connector.connect(
+                    host=db_config.get('host', 'localhost'),
+                    user=db_config.get('user', 'root'),
+                    password=db_config.get('password', ''),
+                    database=db_config.get('database', 'u520834156_dbUPAHOZoning'),
+                    connect_timeout=5
+                )
+                test_conn.close()
+                app.logger.info("Database connection successful")
+            except Exception as db_error:
+                app.logger.error(f"Database connection failed: {db_error}")
+                raise Exception(f"Database connection error: {db_error}")
+            
             land_predictions = LandPredictions(db_config)
-            if not land_predictions.load_models():
-                app.logger.warning("Land prediction models not loaded. Train models first.")
+            
+            # Try to load models
+            models_loaded = land_predictions.load_models(verbose=True)
+            
+            if not models_loaded and auto_train:
+                app.logger.warning("No trained models found. Attempting to train models...")
+                try:
+                    # Try to train models from database
+                    training_result = land_predictions.train_all_models()
+                    if 'error' not in training_result.get('land_cost', {}):
+                        app.logger.info("Models trained successfully")
+                        # Reload models after training
+                        land_predictions.load_models(verbose=True)
+                    else:
+                        app.logger.error(f"Model training failed: {training_result}")
+                except Exception as train_error:
+                    app.logger.error(f"Error during auto-training: {train_error}")
+                    app.logger.warning("Continuing without trained models. Use /api/train endpoint to train manually.")
+            elif not models_loaded:
+                app.logger.warning("Land prediction models not loaded. Use /api/train endpoint to train models.")
+                
         except Exception as e:
             app.logger.error(f"Error initializing land predictions: {e}")
             raise
@@ -102,10 +138,13 @@ def predict_land_cost():
         if not land_data and 'lot_area' in data:
             land_data = data
         
-        lp = init_land_predictions()
+        lp = init_land_predictions(auto_train=True)
         
         if not lp.models.get('land_cost'):
-            return jsonify({'success': False, 'error': 'No trained models available'}), 500
+            return jsonify({
+                'success': False, 
+                'error': 'No trained models available. Please train models first using /api/train endpoint or ensure database has sufficient data.'
+            }), 500
         
         result = lp.predict_land_cost(land_data)
         if result:
@@ -134,10 +173,13 @@ def predict_land_cost_future():
             land_data = data
             target_years = data.get('target_years', 10)
         
-        lp = init_land_predictions()
+        lp = init_land_predictions(auto_train=True)
         
         if not lp.models.get('land_cost'):
-            return jsonify({'success': False, 'error': 'No trained models available'}), 500
+            return jsonify({
+                'success': False, 
+                'error': 'No trained models available. Please train models first using /api/train endpoint or ensure database has sufficient data.'
+            }), 500
         
         result = lp.predict_land_cost_future(land_data, target_years)
         
@@ -167,10 +209,13 @@ def api_predict():
         if not prediction_type:
             return jsonify({'success': False, 'error': 'prediction_type is required'}), 400
         
-        lp = init_land_predictions()
+        lp = init_land_predictions(auto_train=True)
         
         if not lp.models.get('land_cost'):
-            return jsonify({'success': False, 'error': 'No trained models available'}), 500
+            return jsonify({
+                'success': False, 
+                'error': 'No trained models available. Please train models first using /api/train endpoint or ensure database has sufficient data.'
+            }), 500
         
         if prediction_type == 'land_cost':
             result_obj = lp.predict_land_cost(land_data)
@@ -230,6 +275,128 @@ def predict_processing_time():
             
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/train', methods=['POST', 'GET'])
+def train_models():
+    """Train land cost prediction models from database"""
+    try:
+        app.logger.info("Training request received")
+        
+        # Check database connection
+        db_config = get_db_config()
+        try:
+            import mysql.connector
+            test_conn = mysql.connector.connect(
+                host=db_config.get('host', 'localhost'),
+                user=db_config.get('user', 'root'),
+                password=db_config.get('password', ''),
+                database=db_config.get('database', 'u520834156_dbUPAHOZoning'),
+                connect_timeout=5
+            )
+            test_conn.close()
+            app.logger.info("Database connection verified")
+        except Exception as db_error:
+            return jsonify({
+                'success': False, 
+                'error': f'Database connection failed: {str(db_error)}'
+            }), 500
+        
+        # Initialize and train
+        lp = LandPredictions(db_config)
+        
+        app.logger.info("Starting model training...")
+        results = lp.train_all_models()
+        
+        if 'error' in results:
+            return jsonify({
+                'success': False,
+                'error': results['error']
+            }), 500
+        
+        # Reload models after training
+        lp.load_models(verbose=True)
+        
+        return jsonify({
+            'success': True,
+            'message': 'Models trained successfully',
+            'results': results
+        })
+        
+    except Exception as e:
+        app.logger.error(f"Training error: {e}")
+        return jsonify({
+            'success': False,
+            'error': f'Training failed: {str(e)}'
+        }), 500
+
+@app.route('/api/check', methods=['GET'])
+def check_status():
+    """Check database connection and model status"""
+    try:
+        db_config = get_db_config()
+        
+        # Check database connection
+        db_status = {'connected': False, 'error': None}
+        try:
+            import mysql.connector
+            conn = mysql.connector.connect(
+                host=db_config.get('host', 'localhost'),
+                user=db_config.get('user', 'root'),
+                password=db_config.get('password', ''),
+                database=db_config.get('database', 'u520834156_dbUPAHOZoning'),
+                connect_timeout=5
+            )
+            
+            # Test query
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM application_forms LIMIT 1")
+            count = cursor.fetchone()[0]
+            cursor.close()
+            conn.close()
+            
+            db_status = {
+                'connected': True,
+                'records_available': count,
+                'host': db_config.get('host'),
+                'database': db_config.get('database')
+            }
+        except Exception as e:
+            db_status = {
+                'connected': False,
+                'error': str(e)
+            }
+        
+        # Check models
+        models_status = {'loaded': False, 'models_dir': None, 'files': []}
+        try:
+            lp = LandPredictions(db_config)
+            models_dir = lp.models_dir
+            models_status['models_dir'] = models_dir
+            
+            import os
+            if os.path.exists(models_dir):
+                model_files = [f for f in os.listdir(models_dir) if f.endswith(('.pkl', '.json'))]
+                models_status['files'] = model_files
+                models_status['loaded'] = len(model_files) > 0
+                
+                # Try to load
+                if lp.load_models():
+                    models_status['loaded'] = True
+                    models_status['model_count'] = len(lp.models)
+        except Exception as e:
+            models_status['error'] = str(e)
+        
+        return jsonify({
+            'success': True,
+            'database': db_status,
+            'models': models_status
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))

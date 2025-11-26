@@ -21,7 +21,14 @@ from statsmodels.tsa.statespace.sarimax import SARIMAX
 from statsmodels.tsa.seasonal import seasonal_decompose
 from statsmodels.stats.diagnostic import acorr_ljungbox
 from statsmodels.tsa.stattools import adfuller
-import pmdarima as pm
+
+# pmdarima is optional - use manual ARIMA if not available
+try:
+    import pmdarima as pm
+    PMDARIMA_AVAILABLE = True
+except ImportError:
+    PMDARIMA_AVAILABLE = False
+    print("pmdarima not available. Using manual ARIMA parameters.")
 
 # Add parent directory to path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -161,6 +168,10 @@ def check_stationarity(series):
 
 def auto_arima(series, seasonal=True, max_p=3, max_d=2, max_q=3, max_P=2, max_D=1, max_Q=2, m=12):
     """Automatically find best SARIMA parameters using auto_arima"""
+    if not PMDARIMA_AVAILABLE:
+        # Fallback to default ARIMA parameters
+        return (1, 1, 1), (1, 1, 1, 12), None
+    
     try:
         model = pm.auto_arima(
             series,

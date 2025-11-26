@@ -88,14 +88,24 @@ def api_info():
 
 @app.route('/predict/land_cost', methods=['POST'])
 def predict_land_cost():
-    """Predict current land cost"""
+    """Predict current land cost - Compatible with PHP API"""
     try:
         data = request.get_json()
-        if not data or 'data' not in data:
-            return jsonify({'success': False, 'error': 'Invalid request data'}), 400
+        if not data:
+            return jsonify({'success': False, 'error': 'Invalid JSON input'}), 400
         
+        # Support both direct API calls and PHP-style calls
+        prediction_type = data.get('prediction_type', 'land_cost')
         land_data = data.get('data', {})
+        
+        # If data is at root level (direct API call), use it
+        if not land_data and 'lot_area' in data:
+            land_data = data
+        
         lp = init_land_predictions()
+        
+        if not lp.models.get('land_cost'):
+            return jsonify({'success': False, 'error': 'No trained models available'}), 500
         
         result = lp.predict_land_cost(land_data)
         if result:
@@ -108,22 +118,75 @@ def predict_land_cost():
 
 @app.route('/predict/land_cost_future', methods=['POST'])
 def predict_land_cost_future():
-    """Predict future land cost (5-10 years)"""
+    """Predict future land cost (5-10 years) - Compatible with PHP API"""
     try:
         data = request.get_json()
-        if not data or 'data' not in data:
-            return jsonify({'success': False, 'error': 'Invalid request data'}), 400
+        if not data:
+            return jsonify({'success': False, 'error': 'Invalid JSON input'}), 400
         
+        # Support both direct API calls and PHP-style calls
+        prediction_type = data.get('prediction_type', 'land_cost_future')
         land_data = data.get('data', {})
         target_years = data.get('target_years', 10)
         
+        # If data is at root level (direct API call), use it
+        if not land_data and 'lot_area' in data:
+            land_data = data
+            target_years = data.get('target_years', 10)
+        
         lp = init_land_predictions()
+        
+        if not lp.models.get('land_cost'):
+            return jsonify({'success': False, 'error': 'No trained models available'}), 500
+        
         result = lp.predict_land_cost_future(land_data, target_years)
         
         if result:
             return jsonify({'success': True, 'prediction': result})
         else:
             return jsonify({'success': False, 'error': 'Future prediction failed'}), 500
+            
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/predict', methods=['POST'])
+def api_predict():
+    """
+    Universal prediction endpoint - Compatible with PHP land_cost_predict.py format
+    Accepts: {'prediction_type': 'land_cost' | 'land_cost_future', 'data': {...}, 'target_years': 10}
+    """
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({'success': False, 'error': 'Invalid JSON input'}), 400
+        
+        prediction_type = data.get('prediction_type')
+        land_data = data.get('data', {})
+        target_years = data.get('target_years', 10)
+        
+        if not prediction_type:
+            return jsonify({'success': False, 'error': 'prediction_type is required'}), 400
+        
+        lp = init_land_predictions()
+        
+        if not lp.models.get('land_cost'):
+            return jsonify({'success': False, 'error': 'No trained models available'}), 500
+        
+        if prediction_type == 'land_cost':
+            result_obj = lp.predict_land_cost(land_data)
+            if result_obj:
+                return jsonify({'success': True, 'prediction': result_obj})
+            else:
+                return jsonify({'success': False, 'error': 'Prediction failed'}), 500
+                
+        elif prediction_type == 'land_cost_future':
+            result_obj = lp.predict_land_cost_future(land_data, target_years)
+            if result_obj:
+                return jsonify({'success': True, 'prediction': result_obj})
+            else:
+                return jsonify({'success': False, 'error': 'Future prediction failed'}), 500
+        else:
+            return jsonify({'success': False, 'error': 'Invalid prediction type'}), 400
             
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500

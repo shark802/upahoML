@@ -36,9 +36,19 @@ class LandPredictions:
         self.feature_importance = {}
         self.model_metadata = {}
         self.base_path = os.path.dirname(os.path.abspath(__file__))
-        self.models_dir = os.path.join(self.base_path, '..', 'models')
+        # Use models directory within app (not ../models which is read-only on Heroku)
+        self.models_dir = os.path.join(self.base_path, 'models')
         
-        os.makedirs(self.models_dir, exist_ok=True)
+        # Try to create models directory, but don't fail if it's read-only
+        try:
+            os.makedirs(self.models_dir, exist_ok=True)
+        except (OSError, PermissionError) as e:
+            # On Heroku, if we can't create, try /tmp/models as fallback
+            if 'read-only' in str(e).lower() or 'errno 30' in str(e):
+                self.models_dir = os.path.join('/tmp', 'models')
+                os.makedirs(self.models_dir, exist_ok=True)
+            else:
+                raise
         
     def connect_database(self):
         """Connect to MySQL database"""

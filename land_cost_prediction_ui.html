@@ -432,19 +432,31 @@
             document.getElementById('errorMessage').style.display = 'none';
 
             try {
-                // Use Flask API endpoint instead of PHP
-                const apiUrl = window.location.origin + '/predict/land_cost_future';
+                // Call PHP backend which will call the Heroku API
+                const apiUrl = 'predict_land_cost_api.php';
                 const response = await fetch(apiUrl, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
                     },
-                    body: JSON.stringify({
-                        target_years: formData.target_years,
-                        data: formData.data
-                    })
+                    body: JSON.stringify(formData)
                 });
 
+                // Check if response is OK
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    let errorMessage = `Server error (HTTP ${response.status})`;
+                    
+                    try {
+                        const errorJson = JSON.parse(errorText);
+                        errorMessage = errorJson.error || errorMessage;
+                    } catch (e) {
+                        errorMessage += ': ' + errorText.substring(0, 200);
+                    }
+                    
+                    throw new Error(errorMessage);
+                }
+                
                 const result = await response.json();
 
                 document.getElementById('loading').classList.remove('show');
@@ -453,12 +465,29 @@
                 if (result.success && result.prediction) {
                     displayResults(result.prediction);
                 } else {
-                    showError(result.error || 'Prediction failed. Please try again.');
+                    const errorMsg = result.error || 'Prediction failed. Please try again.';
+                    if (result.debug) {
+                        console.error('Debug info:', result.debug);
+                    }
+                    showError(errorMsg);
                 }
             } catch (error) {
                 document.getElementById('loading').classList.remove('show');
                 document.getElementById('predictBtn').disabled = false;
-                showError('Network error: ' + error.message);
+                
+                let errorMessage = 'Network error: ' + error.message;
+                
+                // Provide helpful error messages
+                if (error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
+                    errorMessage = 'Cannot connect to server. Please check your internet connection and try again.';
+                } else if (error.message.includes('500')) {
+                    errorMessage = 'Server error. Please contact the administrator or try again later.';
+                } else if (error.message.includes('timeout')) {
+                    errorMessage = 'Request timed out. The server may be busy. Please try again.';
+                }
+                
+                showError(errorMessage);
+                console.error('Full error:', error);
             }
         });
 

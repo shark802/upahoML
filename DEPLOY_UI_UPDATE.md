@@ -54,3 +54,5 @@ heroku open
 - Verify database connection
 - Check logs for specific error messages
 
+
+

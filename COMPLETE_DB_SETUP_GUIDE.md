@@ -325,3 +325,5 @@ If connection still fails:
 3. Test connection from local machine first
 4. Contact hosting provider support for remote MySQL setup
 
+
+

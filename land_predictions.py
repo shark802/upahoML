@@ -16,6 +16,7 @@ warnings.filterwarnings('ignore')
 
 # Linear Regression
 from sklearn.linear_model import LinearRegression, Ridge, Lasso
+from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor, VotingRegressor
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler, LabelEncoder
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
@@ -198,12 +199,13 @@ class LandPredictions:
         
         return X, y, available_features
     
-    def train_land_cost_model(self, model_type='linear'):
+    def train_land_cost_model(self, model_type='random_forest'):
         """
-        Train linear regression model to predict land cost per square meter
+        Train model to predict land cost per square meter
         
         Args:
-            model_type: 'linear', 'ridge', 'lasso', 'polynomial'
+            model_type: 'linear', 'ridge', 'lasso', 'polynomial', 
+                       'random_forest', 'gradient_boosting', 'ensemble'
         """
         print("Loading land data for cost prediction...")
         df = self.load_land_data()
@@ -234,7 +236,47 @@ class LandPredictions:
         self.scalers['land_cost'] = scaler
         
         # Choose and train model
-        if model_type == 'ridge':
+        if model_type == 'random_forest':
+            # Random Forest - Best balance of accuracy and realism
+            model = RandomForestRegressor(
+                n_estimators=200,
+                max_depth=15,
+                min_samples_split=10,
+                min_samples_leaf=5,
+                random_state=42,
+                n_jobs=-1
+            )
+        elif model_type == 'gradient_boosting':
+            # Gradient Boosting - High accuracy
+            model = GradientBoostingRegressor(
+                n_estimators=200,
+                max_depth=8,
+                learning_rate=0.1,
+                subsample=0.8,
+                random_state=42
+            )
+        elif model_type == 'ensemble':
+            # Ensemble - Most realistic (combines multiple models)
+            rf = RandomForestRegressor(
+                n_estimators=150,
+                max_depth=12,
+                min_samples_split=10,
+                min_samples_leaf=5,
+                random_state=42,
+                n_jobs=-1
+            )
+            gb = GradientBoostingRegressor(
+                n_estimators=150,
+                max_depth=8,
+                learning_rate=0.1,
+                subsample=0.8,
+                random_state=42
+            )
+            model = VotingRegressor(
+                estimators=[('rf', rf), ('gb', gb)],
+                weights=[0.5, 0.5]
+            )
+        elif model_type == 'ridge':
             model = Ridge(alpha=1.0)
         elif model_type == 'lasso':
             model = Lasso(alpha=1.0)
@@ -244,7 +286,7 @@ class LandPredictions:
             X_test_scaled = poly.transform(X_test_scaled)
             model = LinearRegression()
             self.models['land_cost_poly'] = poly
-        else:  # Linear regression
+        else:  # Linear regression (default fallback)
             model = LinearRegression()
         
         # Train model
@@ -264,10 +306,25 @@ class LandPredictions:
         else:
             self.models['land_cost'] = model
         
-        # Store feature importance (coefficients for linear regression)
-        if hasattr(model, 'coef_'):
+        # Store feature importance
+        if hasattr(model, 'feature_importances_'):
+            # For tree-based models (Random Forest, Gradient Boosting)
+            feature_importance = dict(zip(features, model.feature_importances_))
+            self.feature_importance['land_cost'] = feature_importance
+        elif hasattr(model, 'coef_'):
+            # For linear models (coefficients)
             feature_importance = dict(zip(features, abs(model.coef_)))
             self.feature_importance['land_cost'] = feature_importance
+        elif hasattr(model, 'estimators_'):
+            # For ensemble models (average feature importance)
+            importances = []
+            for estimator in model.estimators_:
+                if hasattr(estimator, 'feature_importances_'):
+                    importances.append(estimator.feature_importances_)
+            if importances:
+                avg_importance = np.mean(importances, axis=0)
+                feature_importance = dict(zip(features, avg_importance))
+                self.feature_importance['land_cost'] = feature_importance
         
         # Store metadata
         self.model_metadata = {
@@ -891,7 +948,8 @@ class LandPredictions:
         
         # Train land cost model
         print("\n[1/2] Training Land Cost Prediction Model...")
-        cost_results = self.train_land_cost_model('linear')
+        # Use Random Forest for better accuracy and realism
+        cost_results = self.train_land_cost_model('random_forest')
         
         if cost_results:
             if 'error' in cost_results:

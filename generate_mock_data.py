@@ -84,6 +84,34 @@ def generate_mock_data(num_records=1500):
         'Commercial District', 'Residential Area', 'Mixed Zone'
     ]
     
+    # Location to coordinates mapping (Philippines - adjust to your area)
+    # Base coordinates for different location types
+    location_coords = {
+        'Downtown': (14.5995, 120.9842),  # City center
+        'Urban Core': (14.6050, 120.9900),
+        'Commercial District': (14.5950, 120.9800),
+        'Suburban': (14.6100, 121.0000),
+        'Residential Area': (14.6150, 121.0100),
+        'Mixed Zone': (14.6000, 120.9950),
+        'Industrial Zone': (14.6200, 121.0200),
+        'Rural': (14.6500, 121.0500),
+    }
+    
+    # Zoning types by project type
+    zoning_by_type = {
+        'residential': ['Residential', 'Residential-High', 'Mixed-Use'],
+        'commercial': ['Commercial', 'Mixed-Use', 'Commercial-High'],
+        'industrial': ['Industrial', 'I-1', 'I-2'],
+        'agricultural': ['Agricultural', 'Rural', 'Agricultural-Residential'],
+        'mixed-use': ['Mixed-Use', 'Commercial', 'Residential'],
+        'institutional': ['Institutional', 'Public', 'Government'],
+        'recreational': ['Recreational', 'Open Space', 'Parks'],
+        'residential-commercial': ['Mixed-Use', 'Commercial', 'Residential']
+    }
+    
+    # Location types
+    location_types = ['Urban', 'Suburban', 'Rural', 'Commercial', 'Industrial', 'Mixed']
+    
     genders = ['male', 'female', 'other']
     
     # Cost per sqm ranges by project type (in PHP) - more realistic ranges
@@ -189,16 +217,53 @@ def generate_mock_data(num_records=1500):
         
         gender = random.choice(genders)
         
+        # Select location
+        location = random.choice(locations)
+        
+        # Generate coordinates based on location
+        if location in location_coords:
+            base_lat, base_lon = location_coords[location]
+            # Add small random variation (±0.05 degrees ≈ ±5.5 km)
+            latitude = base_lat + random.uniform(-0.05, 0.05)
+            longitude = base_lon + random.uniform(-0.05, 0.05)
+        else:
+            # For barangays, use general area coordinates
+            latitude = 14.6000 + random.uniform(-0.10, 0.10)
+            longitude = 120.9800 + random.uniform(-0.10, 0.10)
+        
+        # Select zoning based on project type
+        zoning_options = zoning_by_type.get(project_type, ['Mixed-Use'])
+        site_zoning = random.choice(zoning_options)
+        
+        # Select location type based on location name
+        if any(word in location.lower() for word in ['downtown', 'urban', 'commercial']):
+            location_type = 'Urban'
+        elif any(word in location.lower() for word in ['suburban', 'residential']):
+            location_type = 'Suburban'
+        elif any(word in location.lower() for word in ['rural', 'agricultural']):
+            location_type = 'Rural'
+        elif 'industrial' in location.lower():
+            location_type = 'Industrial'
+        elif 'mixed' in location.lower():
+            location_type = 'Mixed'
+        else:
+            location_type = random.choice(location_types)
+        
         record = {
             'project_type': project_type,
             'project_nature': random.choice(project_natures),
-            'project_location': random.choice(locations),
+            'project_location': location,
             'project_area': project_area,
             'lot_area': lot_area,
             'project_cost_numeric': project_cost_numeric,
             'created_at': created_at,
             'age': age,
-            'gender': gender
+            'gender': gender,
+            # Enhanced features for feature engineering
+            'latitude': round(latitude, 6),
+            'longitude': round(longitude, 6),
+            'site_zoning': site_zoning,
+            'location_type': location_type
         }
         
         data.append(record)
@@ -275,14 +340,15 @@ def insert_mock_data(connection, data, batch_size=50):
                             else:
                                 raise
                     
-                    # Insert application form
+                    # Insert application form with enhanced features
                     # Use ON DUPLICATE KEY UPDATE or IGNORE to handle duplicates
                     try:
                         cursor.execute("""
                             INSERT INTO application_forms 
                             (project_type, project_nature, project_location, project_area, 
-                             lot_area, project_cost_numeric, created_at, updated_at, client_id, status)
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                             lot_area, project_cost_numeric, latitude, longitude, site_zoning, 
+                             location_type, created_at, updated_at, client_id, status)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                             ON DUPLICATE KEY UPDATE updated_at = VALUES(updated_at)
                         """, (
                             record['project_type'],
@@ -291,6 +357,10 @@ def insert_mock_data(connection, data, batch_size=50):
                             record['project_area'],
                             record['lot_area'],
                             record['project_cost_numeric'],
+                            record.get('latitude'),
+                            record.get('longitude'),
+                            record.get('site_zoning'),
+                            record.get('location_type'),
                             record['created_at'],
                             record['created_at'] + timedelta(days=random.randint(5, 60)),
                             client_id,
@@ -307,8 +377,9 @@ def insert_mock_data(connection, data, batch_size=50):
                                 cursor.execute("""
                                     INSERT INTO application_forms 
                                     (project_type, project_nature, project_location, project_area, 
-                                     lot_area, project_cost_numeric, created_at, updated_at, client_id, status)
-                                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                     lot_area, project_cost_numeric, latitude, longitude, site_zoning, 
+                                     location_type, created_at, updated_at, client_id, status)
+                                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                                 """, (
                                     record['project_type'],
                                     record['project_nature'],
@@ -316,6 +387,10 @@ def insert_mock_data(connection, data, batch_size=50):
                                     record['project_area'],
                                     record['lot_area'],
                                     record['project_cost_numeric'],
+                                    record.get('latitude'),
+                                    record.get('longitude'),
+                                    record.get('site_zoning'),
+                                    record.get('location_type'),
                                     record['created_at'],
                                     record['created_at'] + timedelta(days=random.randint(5, 60)),
                                     client_id,

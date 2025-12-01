@@ -12,13 +12,14 @@ from datetime import datetime, timedelta
 import json
 import os
 import warnings
+import math
 warnings.filterwarnings('ignore')
 
 # Linear Regression
 from sklearn.linear_model import LinearRegression, Ridge, Lasso
 from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor, VotingRegressor
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler, LabelEncoder
+from sklearn.preprocessing import StandardScaler, LabelEncoder, OneHotEncoder
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 from sklearn.preprocessing import PolynomialFeatures
 
@@ -68,7 +69,7 @@ class LandPredictions:
             return None
     
     def load_land_data(self):
-        """Load land use and cost data from database"""
+        """Load land use and cost data from database with enhanced features"""
         connection = self.connect_database()
         if not connection:
             return None
@@ -84,6 +85,11 @@ class LandPredictions:
                 af.lot_area,
                 af.project_cost_numeric,
                 af.created_at,
+                af.latitude,
+                af.longitude,
+                af.site_zoning,
+                af.location_type,
+                af.land_uses,
                 YEAR(af.created_at) as year,
                 MONTH(af.created_at) as month,
                 c.age,
@@ -118,30 +124,76 @@ class LandPredictions:
                 connection.close()
             return None
     
-    def preprocess_land_cost_data(self, df):
-        """Preprocess data for land cost prediction"""
-        if df is None or len(df) == 0:
-            return None, None, None
-        
+    def _engineer_features(self, df):
+        """Enhanced feature engineering for land property value prediction"""
         df = df.copy()
         
-        # Remove rows with missing cost data
-        df = df[df['cost_per_sqm'].notna() & (df['cost_per_sqm'] > 0)]
+        # 1. SIZE FEATURES
+        # Area ratio (building density)
+        df['area_ratio'] = df['project_area'] / (df['lot_area'] + 1e-6)
+        df['area_ratio'] = df['area_ratio'].clip(0, 1)
         
-        if len(df) == 0:
-            return None, None, None
+        # Size difference
+        df['size_difference'] = df['lot_area'] - df['project_area']
         
-        # Handle missing values
-        numeric_cols = ['lot_area', 'project_area', 'age', 'year', 'month']
-        for col in numeric_cols:
-            if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors='coerce')
-                if col == 'lot_area' or col == 'project_area':
-                    df[col].fillna(df[col].median(), inplace=True)
-                else:
-                    df[col].fillna(df[col].median(), inplace=True)
+        # Efficiency ratio
+        df['efficiency_ratio'] = df['project_area'] / (df['lot_area'] + 1e-6)
         
-        # Encode categorical variables
+        # Lot size categories (encoded as numeric)
+        df['lot_size_small'] = (df['lot_area'] < 100).astype(int)
+        df['lot_size_medium'] = ((df['lot_area'] >= 100) & (df['lot_area'] < 500)).astype(int)
+        df['lot_size_large'] = (df['lot_area'] >= 500).astype(int)
+        
+        # 2. LOCATION FEATURES
+        # Distance to city center (if coordinates available)
+        city_center_lat = 14.5995  # Adjust to your city center
+        city_center_lon = 120.9842
+        
+        if 'latitude' in df.columns and 'longitude' in df.columns:
+            def calc_distance(row):
+                if pd.notna(row['latitude']) and pd.notna(row['longitude']):
+                    try:
+                        lat1, lon1 = float(row['latitude']), float(row['longitude'])
+                        lat2, lon2 = city_center_lat, city_center_lon
+                        R = 6371  # Earth radius in km
+                        dlat = math.radians(lat2 - lat1)
+                        dlon = math.radians(lon2 - lon1)
+                        a = (math.sin(dlat/2) * math.sin(dlat/2) +
+                             math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) *
+                             math.sin(dlon/2) * math.sin(dlon/2))
+                        c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
+                        return R * c
+                    except:
+                        return None
+                return None
+            
+            df['distance_to_center'] = df.apply(calc_distance, axis=1)
+            df['distance_to_center'].fillna(df['distance_to_center'].median(), inplace=True)
+        
+        # Location category encoding
+        location_mapping = {
+            'Downtown': 3, 'Urban Core': 3, 'Commercial District': 3,
+            'Suburban': 2, 'Residential Area': 2, 'Mixed Zone': 2,
+            'Industrial Zone': 1, 'Rural': 1, 'Agricultural': 1
+        }
+        if 'project_location' in df.columns:
+            df['location_category'] = df['project_location'].map(location_mapping).fillna(2)
+        
+        # 3. TEMPORAL FEATURES
+        if 'created_at' in df.columns:
+            df['created_at'] = pd.to_datetime(df['created_at'])
+            df['year'] = df['created_at'].dt.year
+            df['month'] = df['created_at'].dt.month
+            df['day_of_week'] = df['created_at'].dt.dayofweek
+            df['is_weekend'] = (df['day_of_week'] >= 5).astype(int)
+            df['quarter'] = df['created_at'].dt.quarter
+            
+            # Cyclical encoding for month (captures seasonality)
+            df['month_sin'] = np.sin(2 * np.pi * df['month'] / 12)
+            df['month_cos'] = np.cos(2 * np.pi * df['month'] / 12)
+        
+        # 4. ZONING/TYPE FEATURES
+        # Project type encoding (keep existing)
         if 'project_type' in df.columns:
             if 'project_type' not in self.encoders:
                 self.encoders['project_type'] = LabelEncoder()
@@ -154,7 +206,6 @@ class LandPredictions:
                         df['project_type'].astype(str).fillna('residential')
                     )
                 except:
-                    # Handle new categories
                     known = set(self.encoders['project_type'].classes_)
                     unknown = set(df['project_type'].astype(str).unique()) - known
                     for cat in unknown:
@@ -165,19 +216,87 @@ class LandPredictions:
                         df['project_type'].astype(str).fillna('residential')
                     )
         
-        # Feature engineering
-        if 'created_at' in df.columns:
-            df['created_at'] = pd.to_datetime(df['created_at'])
-            df['year'] = df['created_at'].dt.year
-            df['month'] = df['created_at'].dt.month
+        # Zoning category (if available)
+        if 'site_zoning' in df.columns:
+            zoning_mapping = {
+                'Commercial': 3, 'Mixed-Use': 3, 'Residential-High': 3,
+                'Residential': 2, 'Institutional': 2,
+                'Agricultural': 1, 'Industrial': 1, 'Rural': 1
+            }
+            df['zoning_category'] = df['site_zoning'].map(zoning_mapping).fillna(2)
         
-        # Select features
+        # 5. INTERACTION FEATURES
+        # Size × Location interaction
+        if 'lot_area' in df.columns and 'location_category' in df.columns:
+            df['size_location_interaction'] = df['lot_area'] * df['location_category']
+        
+        # Type × Size interaction
+        if 'project_type_encoded' in df.columns and 'lot_area' in df.columns:
+            df['type_size_interaction'] = df['project_type_encoded'] * df['lot_area']
+        
+        # Year × Location interaction
+        if 'year' in df.columns and 'location_category' in df.columns:
+            base_year = df['year'].min()
+            df['year_location_interaction'] = (df['year'] - base_year) * df['location_category']
+        
+        return df
+    
+    def preprocess_land_cost_data(self, df):
+        """Preprocess data for land cost prediction with enhanced features"""
+        if df is None or len(df) == 0:
+            return None, None, None
+        
+        df = df.copy()
+        
+        # Remove rows with missing cost data
+        df = df[df['cost_per_sqm'].notna() & (df['cost_per_sqm'] > 0)]
+        
+        if len(df) == 0:
+            return None, None, None
+        
+        # Handle missing values for numeric columns
+        numeric_cols = ['lot_area', 'project_area', 'age', 'year', 'month']
+        for col in numeric_cols:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors='coerce')
+                if col in ['lot_area', 'project_area']:
+                    df[col].fillna(df[col].median(), inplace=True)
+                else:
+                    df[col].fillna(df[col].median(), inplace=True)
+        
+        # Apply feature engineering
+        df = self._engineer_features(df)
+        
+        # Select all engineered features
         feature_columns = [
-            'lot_area', 'project_area', 'year', 'month', 'age'
+            # Basic features
+            'lot_area', 'project_area', 'year', 'month', 'age',
+            
+            # Size features
+            'area_ratio', 'size_difference', 'efficiency_ratio',
+            'lot_size_small', 'lot_size_medium', 'lot_size_large',
+            
+            # Location features
+            'location_category',
+            
+            # Temporal features
+            'day_of_week', 'is_weekend', 'quarter',
+            'month_sin', 'month_cos',
+            
+            # Type features
+            'project_type_encoded',
+            
+            # Zoning features
+            'zoning_category',
+            
+            # Interaction features
+            'size_location_interaction', 'type_size_interaction',
+            'year_location_interaction'
         ]
         
-        if 'project_type_encoded' in df.columns:
-            feature_columns.append('project_type_encoded')
+        # Add distance feature if available
+        if 'distance_to_center' in df.columns:
+            feature_columns.append('distance_to_center')
         
         # Filter available columns
         available_features = [col for col in feature_columns if col in df.columns]
@@ -356,10 +475,13 @@ class LandPredictions:
     
     def predict_land_cost(self, land_data):
         """
-        Predict land cost per square meter
+        Predict land cost per square meter with enhanced features
         
         Args:
-            land_data: Dict with 'lot_area', 'project_area', 'project_type', 'year', 'month', 'age'
+            land_data: Dict with land property details including:
+                - Basic: 'lot_area', 'project_area', 'project_type', 'year', 'month', 'age'
+                - Location: 'location', 'latitude', 'longitude'
+                - Zoning: 'site_zoning', 'location_type'
         """
         if 'land_cost' not in self.models:
             self.load_models()
@@ -368,30 +490,65 @@ class LandPredictions:
             return None
         
         try:
-            # Prepare features
-            features = []
-            feature_order = ['lot_area', 'project_area', 'year', 'month', 'age', 'project_type_encoded']
+            # Create a DataFrame row for feature engineering
+            current_year = datetime.now().year
+            current_month = datetime.now().month
             
-            for feat in feature_order:
-                if feat == 'lot_area':
-                    features.append(float(land_data.get('lot_area', 100)))
-                elif feat == 'project_area':
-                    features.append(float(land_data.get('project_area', 100)))
-                elif feat == 'year':
-                    features.append(int(land_data.get('year', datetime.now().year)))
-                elif feat == 'month':
-                    features.append(int(land_data.get('month', datetime.now().month)))
-                elif feat == 'age':
-                    features.append(float(land_data.get('age', 35)))
-                elif feat == 'project_type_encoded':
-                    if 'project_type' in land_data and 'project_type' in self.encoders:
-                        try:
-                            encoded = self.encoders['project_type'].transform([str(land_data['project_type'])])[0]
-                            features.append(encoded)
-                        except:
-                            features.append(0)
-                    else:
+            # Build feature dict
+            feature_dict = {
+                'lot_area': float(land_data.get('lot_area', 100)),
+                'project_area': float(land_data.get('project_area', 100)),
+                'year': int(land_data.get('year', current_year)),
+                'month': int(land_data.get('month', current_month)),
+                'age': float(land_data.get('age', 35)),
+                'project_type': str(land_data.get('project_type', 'residential')),
+                'project_location': str(land_data.get('location', land_data.get('project_location', ''))),
+                'created_at': pd.Timestamp(year=land_data.get('year', current_year), 
+                                         month=land_data.get('month', current_month), day=1)
+            }
+            
+            # Add optional features if available
+            if 'latitude' in land_data:
+                feature_dict['latitude'] = float(land_data.get('latitude', 0))
+            if 'longitude' in land_data:
+                feature_dict['longitude'] = float(land_data.get('longitude', 0))
+            if 'site_zoning' in land_data:
+                feature_dict['site_zoning'] = str(land_data.get('site_zoning', ''))
+            if 'location_type' in land_data:
+                feature_dict['location_type'] = str(land_data.get('location_type', ''))
+            
+            # Create DataFrame with single row
+            df = pd.DataFrame([feature_dict])
+            
+            # Apply feature engineering
+            df = self._engineer_features(df)
+            
+            # Get feature list from model metadata (use same features as training)
+            if 'land_cost' in self.model_metadata:
+                expected_features = self.model_metadata['land_cost'].get('features', [])
+            else:
+                # Fallback to default features
+                expected_features = [
+                    'lot_area', 'project_area', 'year', 'month', 'age',
+                    'area_ratio', 'size_difference', 'efficiency_ratio',
+                    'lot_size_small', 'lot_size_medium', 'lot_size_large',
+                    'location_category', 'day_of_week', 'is_weekend', 'quarter',
+                    'month_sin', 'month_cos', 'project_type_encoded',
+                    'size_location_interaction', 'type_size_interaction',
+                    'year_location_interaction'
+                ]
+            
+            # Prepare features in correct order
+            features = []
+            for feat in expected_features:
+                if feat in df.columns:
+                    val = df[feat].iloc[0]
+                    if pd.isna(val):
                         features.append(0)
+                    else:
+                        features.append(float(val))
+                else:
+                    features.append(0)  # Missing feature, use default
             
             # Scale features
             X_scaled = self.scalers['land_cost'].transform([features])
@@ -406,11 +563,14 @@ class LandPredictions:
             return {
                 'predicted_cost_per_sqm': max(0, float(predicted_cost)),
                 'confidence': 'high' if self.model_metadata.get('land_cost', {}).get('r2_score', 0) > 0.7 else 'medium',
-                'model_r2': self.model_metadata.get('land_cost', {}).get('r2_score', 0)
+                'model_r2': self.model_metadata.get('land_cost', {}).get('r2_score', 0),
+                'features_used': len(expected_features)
             }
             
         except Exception as e:
             print(f"Error predicting land cost: {e}")
+            import traceback
+            traceback.print_exc()
             return None
     
     def load_land_use_trends(self):

@@ -140,6 +140,11 @@ def index():
     """Serve the land cost prediction UI"""
     return send_from_directory(os.path.dirname(__file__), 'land_cost_prediction_ui.html')
 
+@app.route('/test')
+def test_page():
+    """Serve the testing page for predictions"""
+    return send_from_directory(os.path.dirname(__file__), 'test_predictions.html')
+
 @app.route('/api')
 def api_info():
     """API information endpoint"""

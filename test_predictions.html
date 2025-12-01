@@ -634,8 +634,20 @@
             document.getElementById('successMessage').style.display = 'none';
 
             try {
-                // Call PHP backend which will call the Heroku API
-                const apiUrl = 'predict_land_cost_api.php';
+                // Determine API URL based on environment
+                // If on Heroku, use direct API endpoint
+                // If local, use PHP backend
+                const isHeroku = window.location.hostname.includes('herokuapp.com');
+                let apiUrl;
+                
+                if (isHeroku) {
+                    // Direct API call on Heroku
+                    apiUrl = '/predict/land_cost_future';
+                } else {
+                    // Use PHP backend locally
+                    apiUrl = 'predict_land_cost_api.php';
+                }
+                
                 const response = await fetch(apiUrl, {
                     method: 'POST',
                     headers: {

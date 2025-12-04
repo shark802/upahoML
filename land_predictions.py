@@ -23,6 +23,17 @@ from sklearn.preprocessing import StandardScaler, LabelEncoder, OneHotEncoder
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 from sklearn.preprocessing import PolynomialFeatures
 
+# Time Series Forecasting - ARIMA
+try:
+    from statsmodels.tsa.arima.model import ARIMA
+    from statsmodels.tsa.statespace.sarimax import SARIMAX
+    from statsmodels.tsa.stattools import adfuller
+    from statsmodels.tsa.seasonal import seasonal_decompose
+    ARIMA_AVAILABLE = True
+except ImportError:
+    ARIMA_AVAILABLE = False
+    print("Statsmodels not available. ARIMA forecasting will not work.")
+
 
 class LandPredictions:
     """
@@ -1096,6 +1107,362 @@ class LandPredictions:
             },
             'scenarios': scenarios,
             'confidence': 'medium' if len(yearly_breakdown) > 0 else 'low'
+        }
+    
+    def prepare_time_series_data(self, project_type=None, location=None, months_back=60):
+        """
+        Prepare time series data from historical land cost data for ARIMA forecasting
+        
+        Args:
+            project_type: Filter by project type (optional)
+            location: Filter by location (optional)
+            months_back: Number of months of historical data to use
+        
+        Returns:
+            pandas Series with monthly average cost per sqm, indexed by date
+        """
+        connection = self.connect_database()
+        if not connection:
+            return None
+        
+        try:
+            query = """
+                SELECT 
+                    DATE_FORMAT(created_at, '%Y-%m-01') as month,
+                    AVG(project_cost_numeric / NULLIF(lot_area, 0)) as avg_cost_per_sqm,
+                    COUNT(*) as count
+                FROM application_forms
+                WHERE project_cost_numeric IS NOT NULL
+                AND lot_area IS NOT NULL
+                AND lot_area > 0
+                AND created_at IS NOT NULL
+                AND created_at >= DATE_SUB(CURDATE(), INTERVAL %s MONTH)
+            """
+            
+            params = [months_back]
+            
+            if project_type:
+                query += " AND project_type = %s"
+                params.append(project_type)
+            
+            if location:
+                query += " AND project_location = %s"
+                params.append(location)
+            
+            query += " GROUP BY DATE_FORMAT(created_at, '%Y-%m-01') HAVING count >= 3 ORDER BY month"
+            
+            df = pd.read_sql(query, connection, params=params)
+            connection.close()
+            
+            if len(df) < 12:  # Need at least 12 months for ARIMA
+                return None
+            
+            # Convert to time series
+            df['month'] = pd.to_datetime(df['month'])
+            df.set_index('month', inplace=True)
+            ts = df['avg_cost_per_sqm']
+            
+            # Fill any missing months with forward fill
+            date_range = pd.date_range(start=ts.index.min(), end=ts.index.max(), freq='MS')
+            ts = ts.reindex(date_range, method='ffill')
+            
+            return ts
+            
+        except Exception as e:
+            print(f"Error preparing time series data: {e}")
+            if connection:
+                connection.close()
+            return None
+    
+    def check_stationarity(self, ts):
+        """Check if time series is stationary using Augmented Dickey-Fuller test"""
+        if not ARIMA_AVAILABLE:
+            return False
+        
+        try:
+            result = adfuller(ts.dropna())
+            return result[1] <= 0.05  # p-value <= 0.05 means stationary
+        except:
+            return False
+    
+    def make_stationary(self, ts, max_diff=2):
+        """Make time series stationary by differencing"""
+        ts_diff = ts.copy()
+        d = 0
+        
+        for i in range(max_diff):
+            if self.check_stationarity(ts_diff):
+                break
+            ts_diff = ts_diff.diff().dropna()
+            d += 1
+        
+        return ts_diff, d
+    
+    def train_arima_model(self, ts, order=None, seasonal_order=None, auto_select=True):
+        """
+        Train ARIMA/SARIMAX model for land cost forecasting
+        
+        Args:
+            ts: Time series data (pandas Series)
+            order: ARIMA order (p, d, q) - if None, will auto-select
+            seasonal_order: Seasonal order (P, D, Q, s) - if None, will use (1,1,1,12)
+            auto_select: If True, automatically select best order
+        
+        Returns:
+            Trained model and metadata
+        """
+        if not ARIMA_AVAILABLE:
+            return None, {'error': 'ARIMA not available - statsmodels not installed'}
+        
+        if ts is None or len(ts) < 12:
+            return None, {'error': 'Insufficient time series data (need at least 12 months)'}
+        
+        try:
+            # Remove any NaN values
+            ts_clean = ts.dropna()
+            
+            if len(ts_clean) < 12:
+                return None, {'error': 'Insufficient data after cleaning'}
+            
+            # Auto-select order if requested
+            if auto_select and order is None:
+                # Try different orders and select best AIC
+                best_aic = np.inf
+                best_order = (1, 1, 1)
+                best_seasonal = (1, 1, 1, 12)
+                best_model = None
+                
+                # Try common ARIMA orders
+                orders = [
+                    (1, 1, 1), (1, 1, 0), (2, 1, 1), (1, 2, 1),
+                    (0, 1, 1), (1, 0, 1), (2, 1, 0)
+                ]
+                
+                for p, d, q in orders:
+                    try:
+                        # Try SARIMAX with seasonal component
+                        model = SARIMAX(ts_clean, order=(p, d, q), seasonal_order=(1, 1, 1, 12))
+                        fitted = model.fit(disp=False, maxiter=100)
+                        
+                        if fitted.aic < best_aic:
+                            best_aic = fitted.aic
+                            best_order = (p, d, q)
+                            best_seasonal = (1, 1, 1, 12)
+                            best_model = fitted
+                    except:
+                        continue
+                
+                if best_model is None:
+                    # Fallback to simple ARIMA
+                    model = ARIMA(ts_clean, order=(1, 1, 1))
+                    fitted = model.fit(disp=False, maxiter=100)
+                    best_order = (1, 1, 1)
+                    best_seasonal = None
+                    best_model = fitted
+                
+                order = best_order
+                seasonal_order = best_seasonal
+            else:
+                # Use provided or default orders
+                if order is None:
+                    order = (1, 1, 1)
+                if seasonal_order is None:
+                    seasonal_order = (1, 1, 1, 12)
+                
+                # Try SARIMAX first (with seasonal)
+                try:
+                    model = SARIMAX(ts_clean, order=order, seasonal_order=seasonal_order)
+                    fitted = model.fit(disp=False, maxiter=100)
+                except:
+                    # Fallback to ARIMA (no seasonal)
+                    model = ARIMA(ts_clean, order=order)
+                    fitted = model.fit(disp=False, maxiter=100)
+                    seasonal_order = None
+            
+            # Calculate model metrics
+            residuals = fitted.resid
+            mse = np.mean(residuals**2)
+            mae = np.mean(np.abs(residuals))
+            rmse = np.sqrt(mse)
+            
+            metadata = {
+                'order': order,
+                'seasonal_order': seasonal_order,
+                'aic': float(fitted.aic),
+                'bic': float(fitted.bic) if hasattr(fitted, 'bic') else None,
+                'mse': float(mse),
+                'mae': float(mae),
+                'rmse': float(rmse),
+                'data_points': len(ts_clean),
+                'model_type': 'SARIMAX' if seasonal_order else 'ARIMA'
+            }
+            
+            return fitted, metadata
+            
+        except Exception as e:
+            return None, {'error': f'ARIMA training failed: {str(e)}'}
+    
+    def forecast_arima(self, model, steps=12, confidence_level=0.95):
+        """
+        Generate forecast using trained ARIMA model
+        
+        Args:
+            model: Trained ARIMA/SARIMAX model
+            steps: Number of periods to forecast
+            confidence_level: Confidence level for prediction intervals
+        
+        Returns:
+            Dictionary with forecast, confidence intervals, and dates
+        """
+        if not ARIMA_AVAILABLE or model is None:
+            return None
+        
+        try:
+            # Generate forecast
+            forecast = model.forecast(steps=steps)
+            forecast_conf_int = model.get_forecast(steps=steps).conf_int(alpha=1-confidence_level)
+            
+            # Generate future dates
+            last_date = model.model.nobs  # Last observation index
+            if hasattr(model.model, 'dates'):
+                last_date_obj = model.model.dates[-1]
+                future_dates = pd.date_range(start=last_date_obj, periods=steps+1, freq='MS')[1:]
+            else:
+                # Fallback: use current date
+                future_dates = pd.date_range(start=pd.Timestamp.now(), periods=steps, freq='MS')
+            
+            # Prepare results
+            forecast_data = []
+            for i, date in enumerate(future_dates):
+                forecast_data.append({
+                    'date': date.strftime('%Y-%m-%d'),
+                    'predicted_cost_per_sqm': float(forecast.iloc[i]) if hasattr(forecast, 'iloc') else float(forecast[i]),
+                    'lower_bound': float(forecast_conf_int.iloc[i, 0]) if forecast_conf_int is not None else None,
+                    'upper_bound': float(forecast_conf_int.iloc[i, 1]) if forecast_conf_int is not None else None
+                })
+            
+            return {
+                'forecast': forecast_data,
+                'mean_forecast': float(forecast.mean()) if hasattr(forecast, 'mean') else float(np.mean(forecast)),
+                'forecast_dates': [d.strftime('%Y-%m-%d') for d in future_dates]
+            }
+            
+        except Exception as e:
+            print(f"Error in ARIMA forecast: {e}")
+            return None
+    
+    def predict_land_cost_arima(self, land_data, forecast_months=12, project_type=None, location=None):
+        """
+        Predict land cost using ARIMA time series forecasting
+        
+        Args:
+            land_data: Dict with land property details
+            forecast_months: Number of months to forecast ahead
+            project_type: Filter by project type (optional)
+            location: Filter by location (optional)
+        
+        Returns:
+            Dictionary with ARIMA-based predictions
+        """
+        if not ARIMA_AVAILABLE:
+            return {
+                'success': False,
+                'error': 'ARIMA not available - statsmodels not installed',
+                'fallback': 'Use predict_land_cost_future instead'
+            }
+        
+        # Prepare time series data
+        ts = self.prepare_time_series_data(project_type=project_type, location=location)
+        
+        if ts is None:
+            return {
+                'success': False,
+                'error': 'Insufficient historical data for ARIMA forecasting (need at least 12 months)',
+                'fallback': 'Use predict_land_cost_future instead'
+            }
+        
+        # Train ARIMA model
+        model, metadata = self.train_arima_model(ts, auto_select=True)
+        
+        if model is None:
+            return {
+                'success': False,
+                'error': metadata.get('error', 'ARIMA model training failed'),
+                'fallback': 'Use predict_land_cost_future instead'
+            }
+        
+        # Generate forecast
+        forecast_result = self.forecast_arima(model, steps=forecast_months)
+        
+        if forecast_result is None:
+            return {
+                'success': False,
+                'error': 'ARIMA forecast generation failed',
+                'fallback': 'Use predict_land_cost_future instead'
+            }
+        
+        # Get current prediction (from ML model if available)
+        current_prediction = self.predict_land_cost(land_data)
+        current_cost = current_prediction.get('predicted_cost_per_sqm', 0) if current_prediction else 0
+        
+        # Get latest historical value
+        latest_historical = float(ts.iloc[-1]) if len(ts) > 0 else current_cost
+        
+        # Calculate target year prediction
+        target_month_idx = min(forecast_months - 1, len(forecast_result['forecast']) - 1)
+        if target_month_idx >= 0:
+            target_cost = forecast_result['forecast'][target_month_idx]['predicted_cost_per_sqm']
+        else:
+            target_cost = latest_historical
+        
+        # Calculate appreciation rate from ARIMA forecast
+        if latest_historical > 0:
+            appreciation_rate = (target_cost / latest_historical) ** (12.0 / forecast_months) - 1
+        else:
+            appreciation_rate = 0.03  # Default 3%
+        
+        # Prepare yearly breakdown
+        yearly_breakdown = []
+        current_year = datetime.now().year
+        lot_area = land_data.get('lot_area', 100)
+        
+        for i, forecast_point in enumerate(forecast_result['forecast']):
+            forecast_date = datetime.strptime(forecast_point['date'], '%Y-%m-%d')
+            year = forecast_date.year
+            month = forecast_date.month
+            
+            if not yearly_breakdown or yearly_breakdown[-1]['year'] != year:
+                yearly_breakdown.append({
+                    'year': year,
+                    'month': month,
+                    'cost_per_sqm': forecast_point['predicted_cost_per_sqm'],
+                    'total_value': forecast_point['predicted_cost_per_sqm'] * lot_area,
+                    'lower_bound': forecast_point.get('lower_bound'),
+                    'upper_bound': forecast_point.get('upper_bound')
+                })
+        
+        return {
+            'success': True,
+            'method': 'ARIMA',
+            'current_prediction': {
+                'year': current_year,
+                'cost_per_sqm': float(latest_historical),
+                'total_value': float(latest_historical * lot_area),
+                'ml_prediction': float(current_cost) if current_cost > 0 else None
+            },
+            'future_prediction': {
+                'target_year': current_year + (forecast_months // 12),
+                'target_month': forecast_months,
+                'cost_per_sqm': float(target_cost),
+                'total_value': float(target_cost * lot_area),
+                'appreciation_rate': float(appreciation_rate),
+                'total_appreciation': float((target_cost / latest_historical) - 1) if latest_historical > 0 else 0,
+                'is_increasing': appreciation_rate > 0
+            },
+            'monthly_forecast': forecast_result['forecast'],
+            'yearly_breakdown': yearly_breakdown,
+            'model_metadata': metadata,
+            'confidence': 'high' if len(ts) >= 24 else 'medium' if len(ts) >= 12 else 'low'
         }
     
     def train_all_models(self):

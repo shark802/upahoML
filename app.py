@@ -153,7 +153,7 @@ def api_info():
         'service': 'UPAHO Land Cost Prediction API',
         'endpoints': {
             '/predict/land_cost': 'POST - Predict current land cost',
-            '/predict/land_cost_future': 'POST - Predict future land cost (5-10 years)',
+            '/predict/land_cost_future': 'POST - Predict future land cost (5-10 years). Use "use_arima": true for ARIMA forecasting',
             '/predict/approval': 'POST - Predict application approval probability',
             '/predict/processing_time': 'POST - Predict processing time'
         }
@@ -204,21 +204,45 @@ def predict_land_cost_future():
         prediction_type = data.get('prediction_type', 'land_cost_future')
         land_data = data.get('data', {})
         target_years = data.get('target_years', 10)
+        use_arima = data.get('use_arima', False)  # New option to use ARIMA
         
         # If data is at root level (direct API call), use it
         if not land_data and 'lot_area' in data:
             land_data = data
             target_years = data.get('target_years', 10)
+            use_arima = data.get('use_arima', False)
         
         lp = init_land_predictions(auto_train=True)
         
-        if not lp.models.get('land_cost'):
-            return jsonify({
-                'success': False, 
-                'error': 'No trained models available. Please train models first using /api/train endpoint or ensure database has sufficient data.'
-            }), 500
+        # Use ARIMA if requested
+        if use_arima:
+            project_type = land_data.get('project_type')
+            location = land_data.get('location') or land_data.get('project_location')
+            forecast_months = target_years * 12
+            
+            result = lp.predict_land_cost_arima(
+                land_data, 
+                forecast_months=forecast_months,
+                project_type=project_type,
+                location=location
+            )
+            
+            if result and result.get('success'):
+                return jsonify({'success': True, 'prediction': result})
+            elif result and not result.get('success'):
+                # ARIMA failed, fallback to regular prediction
+                app.logger.warning(f"ARIMA prediction failed: {result.get('error')}, falling back to regular prediction")
+                use_arima = False
         
-        result = lp.predict_land_cost_future(land_data, target_years)
+        # Regular prediction (ML-based)
+        if not use_arima:
+            if not lp.models.get('land_cost'):
+                return jsonify({
+                    'success': False, 
+                    'error': 'No trained models available. Please train models first using /api/train endpoint or ensure database has sufficient data.'
+                }), 500
+            
+            result = lp.predict_land_cost_future(land_data, target_years)
         
         if result:
             return jsonify({'success': True, 'prediction': result})
@@ -232,7 +256,7 @@ def predict_land_cost_future():
 def api_predict():
     """
     Universal prediction endpoint - Compatible with PHP land_cost_predict.py format
-    Accepts: {'prediction_type': 'land_cost' | 'land_cost_future', 'data': {...}, 'target_years': 10}
+    Accepts: {'prediction_type': 'land_cost' | 'land_cost_future' | 'land_cost_arima', 'data': {...}, 'target_years': 10, 'use_arima': True}
     """
     try:
         data = request.get_json()
@@ -242,27 +266,57 @@ def api_predict():
         prediction_type = data.get('prediction_type')
         land_data = data.get('data', {})
         target_years = data.get('target_years', 10)
+        use_arima = data.get('use_arima', False)
         
         if not prediction_type:
             return jsonify({'success': False, 'error': 'prediction_type is required'}), 400
         
         lp = init_land_predictions(auto_train=True)
         
-        if not lp.models.get('land_cost'):
-            return jsonify({
-                'success': False, 
-                'error': 'No trained models available. Please train models first using /api/train endpoint or ensure database has sufficient data.'
-            }), 500
-        
         if prediction_type == 'land_cost':
+            if not lp.models.get('land_cost'):
+                return jsonify({
+                    'success': False, 
+                    'error': 'No trained models available. Please train models first using /api/train endpoint or ensure database has sufficient data.'
+                }), 500
+            
             result_obj = lp.predict_land_cost(land_data)
             if result_obj:
                 return jsonify({'success': True, 'prediction': result_obj})
             else:
                 return jsonify({'success': False, 'error': 'Prediction failed'}), 500
                 
-        elif prediction_type == 'land_cost_future':
-            result_obj = lp.predict_land_cost_future(land_data, target_years)
+        elif prediction_type == 'land_cost_future' or prediction_type == 'land_cost_arima':
+            # Use ARIMA if explicitly requested or if prediction_type is 'land_cost_arima'
+            if use_arima or prediction_type == 'land_cost_arima':
+                project_type = land_data.get('project_type')
+                location = land_data.get('location') or land_data.get('project_location')
+                forecast_months = target_years * 12
+                
+                result_obj = lp.predict_land_cost_arima(
+                    land_data,
+                    forecast_months=forecast_months,
+                    project_type=project_type,
+                    location=location
+                )
+                
+                if result_obj and result_obj.get('success'):
+                    return jsonify({'success': True, 'prediction': result_obj})
+                elif result_obj and not result_obj.get('success'):
+                    # ARIMA failed, fallback to regular prediction
+                    app.logger.warning(f"ARIMA prediction failed: {result_obj.get('error')}, falling back to regular prediction")
+                    use_arima = False
+            
+            # Regular prediction (ML-based) if ARIMA not used or failed
+            if not use_arima:
+                if not lp.models.get('land_cost'):
+                    return jsonify({
+                        'success': False, 
+                        'error': 'No trained models available. Please train models first using /api/train endpoint or ensure database has sufficient data.'
+                    }), 500
+                
+                result_obj = lp.predict_land_cost_future(land_data, target_years)
+            
             if result_obj:
                 return jsonify({'success': True, 'prediction': result_obj})
             else:

@@ -43,6 +43,7 @@ def main():
         
         prediction_type = request_data.get('prediction_type')
         land_data = request_data.get('data', {})
+        use_arima = request_data.get('use_arima', False)
         
         config_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config.json')
         if os.path.exists(config_file):
@@ -60,22 +61,56 @@ def main():
         with SuppressOutput():
             land_predictions = LandPredictions(db_config)
             
-            if not land_predictions.load_models():
-                result = {'success': False, 'error': 'No trained models available'}
-            elif prediction_type == 'land_cost':
-                result_obj = land_predictions.predict_land_cost(land_data)
-                if result_obj:
-                    result = {'success': True, 'prediction': result_obj}
+            if prediction_type == 'land_cost':
+                if not land_predictions.load_models():
+                    result = {'success': False, 'error': 'No trained models available'}
                 else:
-                    result = {'success': False, 'error': 'Prediction failed'}
-            elif prediction_type == 'land_cost_future':
-                # Long-term prediction (5-10 years)
-                target_years = request_data.get('target_years', 10)
-                result_obj = land_predictions.predict_land_cost_future(land_data, target_years)
-                if result_obj:
-                    result = {'success': True, 'prediction': result_obj}
+                    result_obj = land_predictions.predict_land_cost(land_data)
+                    if result_obj:
+                        result = {'success': True, 'prediction': result_obj}
+                    else:
+                        result = {'success': False, 'error': 'Prediction failed'}
+            elif prediction_type == 'land_cost_future' or prediction_type == 'land_cost_arima':
+                # Use ARIMA if explicitly requested
+                if use_arima or prediction_type == 'land_cost_arima':
+                    target_years = request_data.get('target_years', 10)
+                    forecast_months = target_years * 12
+                    project_type = land_data.get('project_type')
+                    location = land_data.get('location') or land_data.get('project_location')
+                    
+                    result_obj = land_predictions.predict_land_cost_arima(
+                        land_data,
+                        forecast_months=forecast_months,
+                        project_type=project_type,
+                        location=location
+                    )
+                    
+                    if result_obj and result_obj.get('success'):
+                        result = {'success': True, 'prediction': result_obj}
+                    elif result_obj and not result_obj.get('success'):
+                        # ARIMA failed, fallback to regular prediction
+                        target_years = request_data.get('target_years', 10)
+                        if not land_predictions.load_models():
+                            result = {'success': False, 'error': 'No trained models available'}
+                        else:
+                            result_obj = land_predictions.predict_land_cost_future(land_data, target_years)
+                            if result_obj:
+                                result = {'success': True, 'prediction': result_obj, 'method': 'ml_fallback'}
+                            else:
+                                result = {'success': False, 'error': 'Future prediction failed'}
+                    else:
+                        result = {'success': False, 'error': 'ARIMA prediction failed'}
                 else:
-                    result = {'success': False, 'error': 'Future prediction failed'}
+                    # Regular prediction (ML-based)
+                    target_years = request_data.get('target_years', 10)
+                    if not land_predictions.load_models():
+                        result = {'success': False, 'error': 'No trained models available'}
+                    else:
+                        result_obj = land_predictions.predict_land_cost_future(land_data, target_years)
+                        if result_obj:
+                            result = {'success': True, 'prediction': result_obj}
+                        else:
+                            result = {'success': False, 'error': 'Future prediction failed'}
             else:
                 result = {'success': False, 'error': 'Invalid prediction type'}
         

@@ -2,6 +2,25 @@
 /**
  * PHP Backend for Land Cost Prediction
  * Calls Python prediction script and returns JSON
+ * 
+ * Supports:
+ * - prediction_type: 'land_cost' (current year prediction)
+ * - prediction_type: 'land_cost_future' (future prediction with ML)
+ * - prediction_type: 'land_cost_arima' (ARIMA time series forecasting)
+ * - use_arima: true (use ARIMA for future predictions)
+ * 
+ * Example ARIMA request:
+ * {
+ *   "prediction_type": "land_cost_arima",
+ *   "data": {
+ *     "lot_area": 200,
+ *     "project_area": 150,
+ *     "project_type": "residential",
+ *     "location": "Downtown"
+ *   },
+ *   "target_years": 5,
+ *   "use_arima": true
+ * }
  */
 
 header('Content-Type: application/json');

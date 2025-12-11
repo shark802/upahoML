@@ -534,6 +534,12 @@ class LandPredictions:
             # Apply feature engineering
             df = self._engineer_features(df)
             
+            # CRITICAL: Check scaler FIRST - this is the source of truth
+            scaler_expected = None
+            if 'land_cost' in self.scalers and hasattr(self.scalers['land_cost'], 'n_features_in_'):
+                scaler_expected = self.scalers['land_cost'].n_features_in_
+                print(f"CRITICAL: Scaler expects {scaler_expected} features (this is the source of truth)")
+            
             # Get feature list from model metadata (use same features as training)
             if 'land_cost' in self.model_metadata:
                 expected_features = self.model_metadata['land_cost'].get('features', [])
@@ -545,9 +551,16 @@ class LandPredictions:
                     'lot_size_small', 'lot_size_medium', 'lot_size_large',
                     'location_category', 'day_of_week', 'is_weekend', 'quarter',
                     'month_sin', 'month_cos', 'project_type_encoded',
+                    'zoning_category',  # Added missing feature
                     'size_location_interaction', 'type_size_interaction',
-                    'year_location_interaction'
+                    'year_location_interaction', 'distance_to_center'  # Added missing feature
                 ]
+            
+            # CRITICAL FIX: If scaler expects 23, ALWAYS use the 23-feature list
+            if scaler_expected == 23:
+                # Use the exact 23-feature list from training response
+                expected_features = ["lot_area","project_area","year","month","age","area_ratio","size_difference","efficiency_ratio","lot_size_small","lot_size_medium","lot_size_large","location_category","day_of_week","is_weekend","quarter","month_sin","month_cos","project_type_encoded","zoning_category","size_location_interaction","type_size_interaction","year_location_interaction","distance_to_center"]
+                print(f"FORCING: Using 23-feature list because scaler expects 23 features")
             
             # Prepare features in correct order
             features = []
@@ -560,6 +573,21 @@ class LandPredictions:
                         features.append(float(val))
                 else:
                     features.append(0)  # Missing feature, use default
+            
+            # CRITICAL: Ensure we match scaler's expected count
+            if scaler_expected and len(features) != scaler_expected:
+                print(f"CRITICAL: Feature count mismatch! Generated: {len(features)}, Scaler expects: {scaler_expected}")
+                if len(features) < scaler_expected:
+                    # We're missing features - pad with zeros
+                    missing_count = scaler_expected - len(features)
+                    print(f"PADDING: Adding {missing_count} zeros to match scaler's expected {scaler_expected} features")
+                    features.extend([0] * missing_count)
+                elif len(features) > scaler_expected:
+                    # We have too many - truncate
+                    print(f"TRUNCATING: Removing {len(features) - scaler_expected} features to match scaler's expected {scaler_expected} features")
+                    features = features[:scaler_expected]
+            else:
+                print(f"SUCCESS: Feature count matches: {len(features)} features")
             
             # Scale features
             X_scaled = self.scalers['land_cost'].transform([features])

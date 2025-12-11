@@ -160,6 +160,7 @@ class LandPredictions:
         city_center_lat = 14.5995  # Adjust to your city center
         city_center_lon = 120.9842
         
+        # Always create distance_to_center column (required for 23-feature model)
         if 'latitude' in df.columns and 'longitude' in df.columns:
             def calc_distance(row):
                 if pd.notna(row['latitude']) and pd.notna(row['longitude']):
@@ -179,9 +180,16 @@ class LandPredictions:
                 return None
             
             df['distance_to_center'] = df.apply(calc_distance, axis=1)
-            df['distance_to_center'].fillna(df['distance_to_center'].median(), inplace=True)
+            # Fill NaN with median if available, otherwise use default
+            if df['distance_to_center'].notna().any():
+                df['distance_to_center'].fillna(df['distance_to_center'].median(), inplace=True)
+            else:
+                df['distance_to_center'] = 10.0  # Default distance in km
+        else:
+            # Always create distance_to_center with default value if lat/lon not provided
+            df['distance_to_center'] = 10.0  # Default distance in km
         
-        # Location category encoding
+        # Location category encoding - Always create this column (required for 23-feature model)
         location_mapping = {
             'Downtown': 3, 'Urban Core': 3, 'Commercial District': 3,
             'Suburban': 2, 'Residential Area': 2, 'Mixed Zone': 2,
@@ -189,19 +197,38 @@ class LandPredictions:
         }
         if 'project_location' in df.columns:
             df['location_category'] = df['project_location'].map(location_mapping).fillna(2)
+        else:
+            # Always create location_category with default value if project_location not provided
+            df['location_category'] = 2  # Default to standard location
         
-        # 3. TEMPORAL FEATURES
+        # 3. TEMPORAL FEATURES - Always create all temporal features (required for 23-feature model)
         if 'created_at' in df.columns:
-            df['created_at'] = pd.to_datetime(df['created_at'])
-            df['year'] = df['created_at'].dt.year
-            df['month'] = df['created_at'].dt.month
-            df['day_of_week'] = df['created_at'].dt.dayofweek
+            df['created_at'] = pd.to_datetime(df['created_at'], errors='coerce')
+            # Extract temporal features from created_at if available
+            current_year = datetime.now().year
+            current_month = datetime.now().month
+            df['year'] = df['created_at'].dt.year.fillna(df.get('year', current_year))
+            df['month'] = df['created_at'].dt.month.fillna(df.get('month', current_month))
+            df['day_of_week'] = df['created_at'].dt.dayofweek.fillna(1)  # Default to Monday
             df['is_weekend'] = (df['day_of_week'] >= 5).astype(int)
-            df['quarter'] = df['created_at'].dt.quarter
-            
-            # Cyclical encoding for month (captures seasonality)
-            df['month_sin'] = np.sin(2 * np.pi * df['month'] / 12)
-            df['month_cos'] = np.cos(2 * np.pi * df['month'] / 12)
+            df['quarter'] = df['created_at'].dt.quarter.fillna(1)  # Default to Q1
+        else:
+            # Create temporal features from year/month if provided, otherwise use defaults
+            current_year = datetime.now().year
+            current_month = datetime.now().month
+            if 'year' not in df.columns:
+                df['year'] = current_year
+            if 'month' not in df.columns:
+                df['month'] = current_month
+            # Create a temporary datetime to calculate day_of_week and quarter
+            temp_date = pd.to_datetime(df['year'].astype(str) + '-' + df['month'].astype(str) + '-01', errors='coerce')
+            df['day_of_week'] = temp_date.dt.dayofweek.fillna(1)  # Default to Monday
+            df['is_weekend'] = (df['day_of_week'] >= 5).astype(int)
+            df['quarter'] = ((df['month'] - 1) // 3) + 1
+        
+        # Cyclical encoding for month (captures seasonality) - Always create
+        df['month_sin'] = np.sin(2 * np.pi * df['month'] / 12)
+        df['month_cos'] = np.cos(2 * np.pi * df['month'] / 12)
         
         # 4. ZONING/TYPE FEATURES
         # Project type encoding (keep existing)
@@ -227,7 +254,7 @@ class LandPredictions:
                         df['project_type'].astype(str).fillna('residential')
                     )
         
-        # Zoning category (if available)
+        # Zoning category - Always create this column (required for 23-feature model)
         if 'site_zoning' in df.columns:
             zoning_mapping = {
                 'Commercial': 3, 'Mixed-Use': 3, 'Residential-High': 3,
@@ -235,20 +262,30 @@ class LandPredictions:
                 'Agricultural': 1, 'Industrial': 1, 'Rural': 1
             }
             df['zoning_category'] = df['site_zoning'].map(zoning_mapping).fillna(2)
+        else:
+            # Always create zoning_category with default value if site_zoning not provided
+            df['zoning_category'] = 2  # Default to standard zoning
         
         # 5. INTERACTION FEATURES
+        # Always create all interaction features (required for 23-feature model)
         # Size × Location interaction
         if 'lot_area' in df.columns and 'location_category' in df.columns:
             df['size_location_interaction'] = df['lot_area'] * df['location_category']
+        else:
+            df['size_location_interaction'] = 0  # Default if missing components
         
         # Type × Size interaction
         if 'project_type_encoded' in df.columns and 'lot_area' in df.columns:
             df['type_size_interaction'] = df['project_type_encoded'] * df['lot_area']
+        else:
+            df['type_size_interaction'] = 0  # Default if missing components
         
         # Year × Location interaction
         if 'year' in df.columns and 'location_category' in df.columns:
-            base_year = df['year'].min()
+            base_year = df['year'].min() if len(df) > 0 else 2020
             df['year_location_interaction'] = (df['year'] - base_year) * df['location_category']
+        else:
+            df['year_location_interaction'] = 0  # Default if missing components
         
         return df
     
@@ -564,24 +601,33 @@ class LandPredictions:
             
             # Prepare features in correct order
             features = []
+            missing_features = []
             for feat in expected_features:
                 if feat in df.columns:
                     val = df[feat].iloc[0]
                     if pd.isna(val):
-                        features.append(0)
+                        features.append(0.0)
+                        missing_features.append(f"{feat} (was NaN)")
                     else:
                         features.append(float(val))
                 else:
-                    features.append(0)  # Missing feature, use default
+                    features.append(0.0)  # Missing feature, use default
+                    missing_features.append(f"{feat} (not in df)")
+            
+            # Debug: Print feature status
+            if missing_features:
+                print(f"WARNING: Missing or NaN features, using defaults: {', '.join(missing_features)}")
             
             # CRITICAL: Ensure we match scaler's expected count
             if scaler_expected and len(features) != scaler_expected:
                 print(f"CRITICAL: Feature count mismatch! Generated: {len(features)}, Scaler expects: {scaler_expected}")
+                print(f"Expected features ({len(expected_features)}): {expected_features}")
+                print(f"Available columns in df ({len(df.columns)}): {list(df.columns)}")
                 if len(features) < scaler_expected:
                     # We're missing features - pad with zeros
                     missing_count = scaler_expected - len(features)
                     print(f"PADDING: Adding {missing_count} zeros to match scaler's expected {scaler_expected} features")
-                    features.extend([0] * missing_count)
+                    features.extend([0.0] * missing_count)
                 elif len(features) > scaler_expected:
                     # We have too many - truncate
                     print(f"TRUNCATING: Removing {len(features) - scaler_expected} features to match scaler's expected {scaler_expected} features")
@@ -739,6 +785,11 @@ class LandPredictions:
             with open(importance_path, 'w') as f:
                 json.dump(self.feature_importance, f, indent=2)
             
+            # Save model metadata
+            metadata_path = os.path.join(self.models_dir, 'land_cost_metadata.json')
+            with open(metadata_path, 'w') as f:
+                json.dump(self.model_metadata, f, indent=2, default=str)
+            
         except Exception as e:
             print(f"Error saving models: {e}")
     
@@ -778,6 +829,14 @@ class LandPredictions:
             if os.path.exists(importance_path):
                 with open(importance_path, 'r') as f:
                     self.feature_importance = json.load(f)
+            
+            # Load model metadata
+            metadata_path = os.path.join(self.models_dir, 'land_cost_metadata.json')
+            if os.path.exists(metadata_path):
+                with open(metadata_path, 'r') as f:
+                    self.model_metadata = json.load(f)
+                if verbose:
+                    print("Loaded model metadata")
             
             return len(self.models) > 0
             

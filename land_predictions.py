@@ -18,9 +18,9 @@ warnings.filterwarnings('ignore')
 # Linear Regression
 from sklearn.linear_model import LinearRegression, Ridge, Lasso
 from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor, VotingRegressor
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, cross_val_score, KFold, GridSearchCV, RandomizedSearchCV
 from sklearn.preprocessing import StandardScaler, LabelEncoder, OneHotEncoder
-from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
+from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score, make_scorer
 from sklearn.preprocessing import PolynomialFeatures
 
 # Time Series Forecasting - ARIMA
@@ -366,14 +366,19 @@ class LandPredictions:
         
         return X, y, available_features
     
-    def train_land_cost_model(self, model_type='random_forest'):
+    def train_land_cost_model(self, model_type='random_forest', use_cv=False, cv_folds=5):
         """
         Train model to predict land cost per square meter
         
         Args:
             model_type: 'linear', 'ridge', 'lasso', 'polynomial', 
                        'random_forest', 'gradient_boosting', 'ensemble'
+            use_cv: If True, use cross-validation for more reliable metrics
+            cv_folds: Number of cross-validation folds (default: 5)
         """
+        if use_cv:
+            return self.train_land_cost_model_with_cv(model_type, cv_folds)
+        
         print("Loading land data for cost prediction...")
         df = self.load_land_data()
         
@@ -520,6 +525,475 @@ class LandPredictions:
             'r2_score': r2,
             'features': features
         }
+    
+    def _create_model(self, model_type):
+        """
+        Create a model instance without training (for comparison purposes)
+        
+        Args:
+            model_type: 'linear', 'ridge', 'lasso', 'polynomial', 
+                       'random_forest', 'gradient_boosting', 'ensemble'
+        
+        Returns:
+            Model instance
+        """
+        if model_type == 'random_forest':
+            return RandomForestRegressor(
+                n_estimators=200,
+                max_depth=15,
+                min_samples_split=10,
+                min_samples_leaf=5,
+                random_state=42,
+                n_jobs=-1
+            )
+        elif model_type == 'gradient_boosting':
+            return GradientBoostingRegressor(
+                n_estimators=200,
+                max_depth=8,
+                learning_rate=0.1,
+                subsample=0.8,
+                random_state=42
+            )
+        elif model_type == 'ensemble':
+            rf = RandomForestRegressor(
+                n_estimators=150,
+                max_depth=12,
+                min_samples_split=10,
+                min_samples_leaf=5,
+                random_state=42,
+                n_jobs=-1
+            )
+            gb = GradientBoostingRegressor(
+                n_estimators=150,
+                max_depth=8,
+                learning_rate=0.1,
+                subsample=0.8,
+                random_state=42
+            )
+            return VotingRegressor(
+                estimators=[('rf', rf), ('gb', gb)],
+                weights=[0.5, 0.5]
+            )
+        elif model_type == 'ridge':
+            return Ridge(alpha=1.0)
+        elif model_type == 'lasso':
+            return Lasso(alpha=1.0)
+        elif model_type == 'polynomial':
+            # Note: PolynomialFeatures needs to be applied separately
+            return LinearRegression()
+        else:  # Linear regression (default fallback)
+            return LinearRegression()
+    
+    def train_land_cost_model_with_cv(self, model_type='random_forest', cv_folds=5, return_cv_scores=False):
+        """
+        Train model with cross-validation for more reliable metrics
+        
+        Args:
+            model_type: Model type to train
+            cv_folds: Number of cross-validation folds (default: 5)
+            return_cv_scores: If True, return CV scores in addition to test metrics
+        
+        Returns:
+            Dictionary with training results including CV scores
+        """
+        print("Loading land data for cost prediction...")
+        df = self.load_land_data()
+        
+        if df is None or len(df) == 0:
+            return {"error": "No land cost data available"}
+        
+        print(f"Loaded {len(df)} records")
+        
+        # Preprocess data
+        X, y, features = self.preprocess_land_cost_data(df)
+        
+        if X is None or len(X) == 0:
+            return {"error": "No valid data after preprocessing"}
+        
+        print(f"Training samples: {len(X)}")
+        print(f"Features: {features}")
+        
+        # Split data
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y, test_size=0.2, random_state=42
+        )
+        
+        # Scale features
+        scaler = StandardScaler()
+        X_train_scaled = scaler.fit_transform(X_train)
+        X_test_scaled = scaler.transform(X_test)
+        self.scalers['land_cost'] = scaler
+        
+        # Create and train model
+        if model_type == 'random_forest':
+            model = RandomForestRegressor(
+                n_estimators=200,
+                max_depth=15,
+                min_samples_split=10,
+                min_samples_leaf=5,
+                random_state=42,
+                n_jobs=-1
+            )
+        elif model_type == 'gradient_boosting':
+            model = GradientBoostingRegressor(
+                n_estimators=200,
+                max_depth=8,
+                learning_rate=0.1,
+                subsample=0.8,
+                random_state=42
+            )
+        elif model_type == 'ensemble':
+            rf = RandomForestRegressor(
+                n_estimators=150,
+                max_depth=12,
+                min_samples_split=10,
+                min_samples_leaf=5,
+                random_state=42,
+                n_jobs=-1
+            )
+            gb = GradientBoostingRegressor(
+                n_estimators=150,
+                max_depth=8,
+                learning_rate=0.1,
+                subsample=0.8,
+                random_state=42
+            )
+            model = VotingRegressor(
+                estimators=[('rf', rf), ('gb', gb)],
+                weights=[0.5, 0.5]
+            )
+        elif model_type == 'ridge':
+            model = Ridge(alpha=1.0)
+        elif model_type == 'lasso':
+            model = Lasso(alpha=1.0)
+        elif model_type == 'polynomial':
+            poly = PolynomialFeatures(degree=2, include_bias=False)
+            X_train_scaled = poly.fit_transform(X_train_scaled)
+            X_test_scaled = poly.transform(X_test_scaled)
+            model = LinearRegression()
+            self.models['land_cost_poly'] = poly
+        else:
+            model = LinearRegression()
+        
+        # Cross-validation on training set
+        print(f"\nPerforming {cv_folds}-fold cross-validation...")
+        kfold = KFold(n_splits=cv_folds, shuffle=True, random_state=42)
+        
+        cv_r2_scores = cross_val_score(model, X_train_scaled, y_train, cv=kfold, scoring='r2', n_jobs=-1)
+        cv_rmse_scores = cross_val_score(
+            model, X_train_scaled, y_train, cv=kfold, 
+            scoring=make_scorer(lambda y_true, y_pred: np.sqrt(mean_squared_error(y_true, y_pred))),
+            n_jobs=-1
+        )
+        cv_mae_scores = cross_val_score(
+            model, X_train_scaled, y_train, cv=kfold,
+            scoring=make_scorer(mean_absolute_error),
+            n_jobs=-1
+        )
+        
+        cv_results = {
+            'r2': {
+                'mean': float(cv_r2_scores.mean()),
+                'std': float(cv_r2_scores.std()),
+                'scores': [float(s) for s in cv_r2_scores]
+            },
+            'rmse': {
+                'mean': float(cv_rmse_scores.mean()),
+                'std': float(cv_rmse_scores.std()),
+                'scores': [float(s) for s in cv_rmse_scores]
+            },
+            'mae': {
+                'mean': float(cv_mae_scores.mean()),
+                'std': float(cv_mae_scores.std()),
+                'scores': [float(s) for s in cv_mae_scores]
+            }
+        }
+        
+        print(f"CV R² Score: {cv_results['r2']['mean']:.4f} (+/- {cv_results['r2']['std']*2:.4f})")
+        print(f"CV RMSE: {cv_results['rmse']['mean']:.2f} (+/- {cv_results['rmse']['std']*2:.2f}) PHP/sqm")
+        print(f"CV MAE: {cv_results['mae']['mean']:.2f} (+/- {cv_results['mae']['std']*2:.2f}) PHP/sqm")
+        
+        # Train on full training set
+        print("\nTraining on full training set...")
+        model.fit(X_train_scaled, y_train)
+        
+        # Evaluate on test set
+        y_pred = model.predict(X_test_scaled)
+        
+        mae = mean_absolute_error(y_test, y_pred)
+        mse = mean_squared_error(y_test, y_pred)
+        rmse = np.sqrt(mse)
+        r2 = r2_score(y_test, y_pred)
+        
+        # Store model
+        self.models['land_cost'] = model
+        
+        # Store feature importance
+        if hasattr(model, 'feature_importances_'):
+            feature_importance = dict(zip(features, model.feature_importances_))
+            self.feature_importance['land_cost'] = feature_importance
+        elif hasattr(model, 'coef_'):
+            feature_importance = dict(zip(features, abs(model.coef_)))
+            self.feature_importance['land_cost'] = feature_importance
+        elif hasattr(model, 'estimators_'):
+            importances = []
+            for estimator in model.estimators_:
+                if hasattr(estimator, 'feature_importances_'):
+                    importances.append(estimator.feature_importances_)
+            if importances:
+                avg_importance = np.mean(importances, axis=0)
+                feature_importance = dict(zip(features, avg_importance))
+                self.feature_importance['land_cost'] = feature_importance
+        
+        # Store metadata
+        self.model_metadata = {
+            'land_cost': {
+                'model_type': model_type,
+                'mae': float(mae),
+                'mse': float(mse),
+                'rmse': float(rmse),
+                'r2_score': float(r2),
+                'cv_r2_mean': float(cv_results['r2']['mean']),
+                'cv_r2_std': float(cv_results['r2']['std']),
+                'cv_rmse_mean': float(cv_results['rmse']['mean']),
+                'cv_rmse_std': float(cv_results['rmse']['std']),
+                'cv_mae_mean': float(cv_results['mae']['mean']),
+                'cv_mae_std': float(cv_results['mae']['std']),
+                'training_samples': len(X_train),
+                'test_samples': len(X_test),
+                'features': features,
+                'training_date': datetime.now().isoformat()
+            }
+        }
+        
+        print(f"\nLand Cost Model Training Complete:")
+        print(f"  Test RMSE: {rmse:.2f} PHP/sqm")
+        print(f"  Test MAE: {mae:.2f} PHP/sqm")
+        print(f"  Test R² Score: {r2:.4f}")
+        
+        result = {
+            'mae': mae,
+            'mse': mse,
+            'rmse': rmse,
+            'r2_score': r2,
+            'features': features,
+            'cv_r2_mean': cv_results['r2']['mean'],
+            'cv_r2_std': cv_results['r2']['std'],
+            'cv_rmse_mean': cv_results['rmse']['mean'],
+            'cv_rmse_std': cv_results['rmse']['std'],
+            'cv_mae_mean': cv_results['mae']['mean'],
+            'cv_mae_std': cv_results['mae']['std']
+        }
+        
+        if return_cv_scores:
+            result['cv_scores'] = cv_results
+        
+        return result
+    
+    def optimize_hyperparameters(self, model_type='random_forest', search_type='grid', n_iter=50):
+        """
+        Optimize hyperparameters for land cost prediction model
+        
+        Args:
+            model_type: 'random_forest' or 'gradient_boosting'
+            search_type: 'grid' for GridSearchCV or 'random' for RandomizedSearchCV
+            n_iter: Number of iterations for RandomizedSearchCV
+        
+        Returns:
+            Dictionary with best parameters and performance metrics
+        """
+        print("=" * 80)
+        print(f"HYPERPARAMETER OPTIMIZATION: {model_type.upper()}")
+        print("=" * 80)
+        
+        print("Loading land data...")
+        df = self.load_land_data()
+        
+        if df is None or len(df) == 0:
+            return {"error": "No land cost data available"}
+        
+        print(f"Loaded {len(df)} records")
+        
+        # Preprocess data
+        X, y, features = self.preprocess_land_cost_data(df)
+        
+        if X is None or len(X) == 0:
+            return {"error": "No valid data after preprocessing"}
+        
+        print(f"Training samples: {len(X)}")
+        
+        # Split data
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y, test_size=0.2, random_state=42
+        )
+        
+        # Scale features
+        scaler = StandardScaler()
+        X_train_scaled = scaler.fit_transform(X_train)
+        X_test_scaled = scaler.transform(X_test)
+        
+        # Define parameter grids
+        if model_type == 'random_forest':
+            param_grid = {
+                'n_estimators': [100, 200, 300, 500],
+                'max_depth': [10, 15, 20, None],
+                'min_samples_split': [5, 10, 20],
+                'min_samples_leaf': [2, 5, 10],
+                'max_features': ['sqrt', 'log2', None]
+            }
+            base_model = RandomForestRegressor(random_state=42, n_jobs=-1)
+        elif model_type == 'gradient_boosting':
+            param_grid = {
+                'n_estimators': [100, 200, 300],
+                'max_depth': [5, 8, 10],
+                'learning_rate': [0.05, 0.1, 0.15],
+                'subsample': [0.8, 0.9, 1.0]
+            }
+            base_model = GradientBoostingRegressor(random_state=42)
+        else:
+            return {"error": f"Hyperparameter optimization not supported for {model_type}"}
+        
+        # Perform search
+        print(f"\nPerforming {search_type} search...")
+        print(f"Parameter combinations to test: {len(param_grid)}")
+        
+        if search_type == 'grid':
+            search = GridSearchCV(
+                base_model,
+                param_grid,
+                cv=5,
+                scoring='r2',
+                n_jobs=-1,
+                verbose=1
+            )
+        else:  # random
+            search = RandomizedSearchCV(
+                base_model,
+                param_grid,
+                n_iter=n_iter,
+                cv=5,
+                scoring='r2',
+                n_jobs=-1,
+                random_state=42,
+                verbose=1
+            )
+        
+        search.fit(X_train_scaled, y_train)
+        
+        # Get best model
+        best_model = search.best_estimator_
+        best_params = search.best_params_
+        best_score = search.best_score_
+        
+        # Evaluate on test set
+        y_pred = best_model.predict(X_test_scaled)
+        test_r2 = r2_score(y_test, y_pred)
+        test_rmse = np.sqrt(mean_squared_error(y_test, y_pred))
+        test_mae = mean_absolute_error(y_test, y_pred)
+        
+        print("\n" + "=" * 80)
+        print("OPTIMIZATION RESULTS")
+        print("=" * 80)
+        print(f"Best CV R² Score: {best_score:.4f}")
+        print(f"Best Parameters:")
+        for param, value in best_params.items():
+            print(f"  {param}: {value}")
+        print(f"\nTest Set Performance:")
+        print(f"  R² Score: {test_r2:.4f}")
+        print(f"  RMSE: {test_rmse:.2f} PHP/sqm")
+        print(f"  MAE: {test_mae:.2f} PHP/sqm")
+        print("=" * 80)
+        
+        # Store optimized model
+        self.models['land_cost'] = best_model
+        self.scalers['land_cost'] = scaler
+        
+        # Store feature importance
+        if hasattr(best_model, 'feature_importances_'):
+            feature_importance = dict(zip(features, best_model.feature_importances_))
+            self.feature_importance['land_cost'] = feature_importance
+        
+        # Store metadata
+        self.model_metadata = {
+            'land_cost': {
+                'model_type': model_type,
+                'optimized': True,
+                'best_params': best_params,
+                'cv_r2_score': float(best_score),
+                'test_r2_score': float(test_r2),
+                'test_rmse': float(test_rmse),
+                'test_mae': float(test_mae),
+                'training_samples': len(X_train),
+                'test_samples': len(X_test),
+                'features': features,
+                'optimization_date': datetime.now().isoformat()
+            }
+        }
+        
+        return {
+            'best_params': best_params,
+            'cv_r2_score': float(best_score),
+            'test_r2_score': float(test_r2),
+            'test_rmse': float(test_rmse),
+            'test_mae': float(test_mae),
+            'features': features
+        }
+    
+    def export_feature_importance(self, output_file='land_feature_importance.json'):
+        """
+        Export feature importance to JSON file
+        
+        Args:
+            output_file: Path to output JSON file
+        
+        Returns:
+            Dictionary with feature importance
+        """
+        if 'land_cost' not in self.feature_importance:
+            # Try to load models first
+            if 'land_cost' not in self.models:
+                self.load_models()
+            
+            # If still no feature importance, train a model
+            if 'land_cost' not in self.feature_importance:
+                print("No feature importance available. Training model first...")
+                self.train_land_cost_model()
+        
+        if 'land_cost' not in self.feature_importance:
+            return {"error": "Could not generate feature importance"}
+        
+        feature_importance = self.feature_importance['land_cost']
+        
+        # Sort by importance
+        sorted_features = sorted(
+            feature_importance.items(),
+            key=lambda x: x[1],
+            reverse=True
+        )
+        
+        # Create output structure
+        output = {
+            'feature_importance': dict(sorted_features),
+            'top_features': [
+                {'feature': feat, 'importance': float(imp)}
+                for feat, imp in sorted_features[:10]
+            ],
+            'export_date': datetime.now().isoformat(),
+            'total_features': len(sorted_features)
+        }
+        
+        # Save to file
+        output_path = os.path.join(self.base_path, output_file)
+        with open(output_path, 'w') as f:
+            json.dump(output, f, indent=2)
+        
+        print(f"\nFeature importance exported to: {output_path}")
+        print("\nTop 10 Most Important Features:")
+        print("-" * 50)
+        for i, (feat, imp) in enumerate(sorted_features[:10], 1):
+            print(f"{i:2d}. {feat:<30} {imp:.6f}")
+        
+        return output
     
     def predict_land_cost(self, land_data):
         """

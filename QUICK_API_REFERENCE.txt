@@ -1,0 +1,78 @@
+═══════════════════════════════════════════════════════════════
+YOUR API ENDPOINTS - QUICK REFERENCE
+═══════════════════════════════════════════════════════════════
+
+Base URL:
+https://endpoint-upaho-3e0044d5e3a6.herokuapp.com
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+1. FUTURE PREDICTION (Recommended)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+POST /predict/land_cost_future
+
+Request:
+{
+  "target_years": 10,
+  "data": {
+    "lot_area": 200,
+    "project_area": 150,
+    "project_type": "residential",
+    "location": "Downtown",
+    "year": 2024,
+    "month": 12,
+    "age": 35
+  }
+}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+2. CURRENT YEAR PREDICTION
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+POST /predict/land_cost
+
+Request:
+{
+  "lot_area": 200,
+  "project_area": 150,
+  "project_type": "residential",
+  "location": "Downtown",
+  "year": 2024,
+  "month": 12,
+  "age": 35
+}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+3. UNIVERSAL ENDPOINT (PHP Compatible)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+POST /api/predict
+
+Request:
+{
+  "prediction_type": "land_cost_future",
+  "target_years": 10,
+  "data": {
+    "lot_area": 200,
+    "project_area": 150,
+    "project_type": "residential",
+    "location": "Downtown",
+    "year": 2024,
+    "month": 12,
+    "age": 35
+  }
+}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+QUICK TEST
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Visit in browser:
+https://endpoint-upaho-3e0044d5e3a6.herokuapp.com/api
+
+Or test page:
+https://endpoint-upaho-3e0044d5e3a6.herokuapp.com/test
+
+═══════════════════════════════════════════════════════════════
+
+

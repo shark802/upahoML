@@ -367,11 +367,217 @@ def predict_processing_time():
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
+@app.route('/api/compare_models', methods=['POST', 'GET'])
+def compare_models():
+    """Compare different models for land cost prediction"""
+    try:
+        app.logger.info("Model comparison request received")
+        
+        # Get parameters from request
+        data = request.get_json() if request.is_json else {}
+        cv_folds = data.get('cv_folds', 5)
+        
+        # Check database connection
+        db_config = get_db_config()
+        try:
+            import mysql.connector
+            test_conn = mysql.connector.connect(
+                host=db_config.get('host', 'localhost'),
+                user=db_config.get('user', 'root'),
+                password=db_config.get('password', ''),
+                database=db_config.get('database', 'u520834156_dbUPAHOZoning'),
+                connect_timeout=5
+            )
+            test_conn.close()
+        except Exception as db_error:
+            return jsonify({
+                'success': False, 
+                'error': f'Database connection failed: {str(db_error)}'
+            }), 500
+        
+        # Import comparison function
+        from compare_models import compare_models as run_comparison
+        
+        # Run comparison
+        results = run_comparison(cv_folds=cv_folds)
+        
+        if 'error' in results:
+            return jsonify({
+                'success': False,
+                'error': results['error']
+            }), 500
+        
+        return jsonify({
+            'success': True,
+            'comparison': results
+        })
+        
+    except Exception as e:
+        app.logger.error(f"Model comparison error: {str(e)}")
+        import traceback
+        app.logger.error(traceback.format_exc())
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/api/optimize_model', methods=['POST', 'GET'])
+def optimize_model():
+    """Optimize hyperparameters for land cost prediction model"""
+    try:
+        app.logger.info("Hyperparameter optimization request received")
+        
+        # Get parameters from request
+        data = request.get_json() if request.is_json else {}
+        model_type = data.get('model_type', 'random_forest')
+        search_type = data.get('search_type', 'grid')  # 'grid' or 'random'
+        n_iter = data.get('n_iter', 50)  # For RandomizedSearchCV
+        
+        # Validate model type
+        if model_type not in ['random_forest', 'gradient_boosting']:
+            return jsonify({
+                'success': False,
+                'error': f'Model type must be "random_forest" or "gradient_boosting", got: {model_type}'
+            }), 400
+        
+        # Check database connection
+        db_config = get_db_config()
+        try:
+            import mysql.connector
+            test_conn = mysql.connector.connect(
+                host=db_config.get('host', 'localhost'),
+                user=db_config.get('user', 'root'),
+                password=db_config.get('password', ''),
+                database=db_config.get('database', 'u520834156_dbUPAHOZoning'),
+                connect_timeout=5
+            )
+            test_conn.close()
+        except Exception as db_error:
+            return jsonify({
+                'success': False, 
+                'error': f'Database connection failed: {str(db_error)}'
+            }), 500
+        
+        # Initialize and optimize
+        lp = LandPredictions(db_config)
+        
+        app.logger.info(f"Starting hyperparameter optimization for {model_type}...")
+        results = lp.optimize_hyperparameters(
+            model_type=model_type,
+            search_type=search_type,
+            n_iter=n_iter
+        )
+        
+        if 'error' in results:
+            return jsonify({
+                'success': False,
+                'error': results['error']
+            }), 500
+        
+        # Save optimized model
+        try:
+            lp.save_models()
+            app.logger.info("Optimized model saved successfully")
+        except Exception as save_error:
+            app.logger.warning(f"Could not save optimized model: {str(save_error)}")
+        
+        return jsonify({
+            'success': True,
+            'optimization': results
+        })
+        
+    except Exception as e:
+        app.logger.error(f"Hyperparameter optimization error: {str(e)}")
+        import traceback
+        app.logger.error(traceback.format_exc())
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/api/feature_importance', methods=['GET', 'POST'])
+def get_feature_importance():
+    """Get feature importance for land cost prediction model"""
+    try:
+        app.logger.info("Feature importance request received")
+        
+        # Get parameters from request
+        data = request.get_json() if request.is_json else {}
+        export = data.get('export', False)
+        output_file = data.get('output_file', 'land_feature_importance.json')
+        
+        # Check database connection
+        db_config = get_db_config()
+        
+        # Initialize
+        lp = LandPredictions(db_config)
+        
+        # Try to load existing models
+        lp.load_models()
+        
+        # Export or return feature importance
+        if export:
+            result = lp.export_feature_importance(output_file=output_file)
+        else:
+            # Just return feature importance without exporting
+            if 'land_cost' not in lp.feature_importance:
+                # Train a model if no feature importance available
+                app.logger.info("No feature importance available. Training model...")
+                lp.train_land_cost_model()
+            
+            if 'land_cost' not in lp.feature_importance:
+                return jsonify({
+                    'success': False,
+                    'error': 'Could not generate feature importance'
+                }), 500
+            
+            feature_importance = lp.feature_importance['land_cost']
+            sorted_features = sorted(
+                feature_importance.items(),
+                key=lambda x: x[1],
+                reverse=True
+            )
+            
+            result = {
+                'feature_importance': dict(sorted_features),
+                'top_features': [
+                    {'feature': feat, 'importance': float(imp)}
+                    for feat, imp in sorted_features[:10]
+                ],
+                'total_features': len(sorted_features)
+            }
+        
+        if 'error' in result:
+            return jsonify({
+                'success': False,
+                'error': result['error']
+            }), 500
+        
+        return jsonify({
+            'success': True,
+            'feature_importance': result
+        })
+        
+    except Exception as e:
+        app.logger.error(f"Feature importance error: {str(e)}")
+        import traceback
+        app.logger.error(traceback.format_exc())
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
 @app.route('/api/train', methods=['POST', 'GET'])
 def train_models():
     """Train land cost prediction models from database"""
     try:
         app.logger.info("Training request received")
+        
+        # Get parameters from request
+        data = request.get_json() if request.is_json else {}
+        model_type = data.get('model_type', 'random_forest')
+        use_cv = data.get('use_cv', False)
+        cv_folds = data.get('cv_folds', 5)
         
         # Check database connection
         db_config = get_db_config()
@@ -395,11 +601,15 @@ def train_models():
         # Initialize and train
         lp = LandPredictions(db_config)
         
-        app.logger.info("Starting model training...")
-        results = lp.train_all_models()
+        app.logger.info(f"Starting model training (type: {model_type}, CV: {use_cv})...")
+        
+        if use_cv:
+            results = lp.train_land_cost_model_with_cv(model_type=model_type, cv_folds=cv_folds)
+        else:
+            results = lp.train_land_cost_model(model_type=model_type)
         
         # Check if training actually produced results
-        if not results or (isinstance(results, dict) and len(results) == 0):
+        if not results or (isinstance(results, dict) and 'error' in results):
             # Check if there's data in database
             try:
                 conn = mysql.connector.connect(

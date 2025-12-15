@@ -61,7 +61,7 @@ try {
     // Get API URL from environment or use default
     $api_url = getenv('HEROKU_API_URL');
     if (empty($api_url)) {
-        $api_url = 'https://upaho-883f1ffc88a8.herokuapp.com';
+        $api_url = 'https://endpoint-upaho-3e0044d5e3a6.herokuapp.com';
     }
     
     // Determine which endpoint to use based on prediction_type

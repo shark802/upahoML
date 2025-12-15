@@ -446,3 +446,7 @@ future = lp.predict_land_cost_future(land_data, target_years=10)
 
 
 
+
+
+
+
